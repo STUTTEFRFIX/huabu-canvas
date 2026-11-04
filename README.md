@@ -35,6 +35,8 @@ python3 -m http.server 8000
 
 当前 APK 使用 debug 签名，可以直接安装和覆盖升级；如果要上架或长期分发，请用 `android/build.sh` 换成自己的 release keystore。
 
+首次构建会在 `android/debug.keystore` 生成调试签名。请保留这个文件：删除后重新生成的密钥对不上，新 APK 将无法覆盖安装旧版本。
+
 ## 操作
 
 | 操作 | 结果 |

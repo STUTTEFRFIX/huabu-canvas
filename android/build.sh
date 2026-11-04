@@ -6,6 +6,7 @@ APP_ROOT="$(cd "$ROOT/.." && pwd)"
 BUILD="$ROOT/build"
 VERSION="${VERSION:-0.1.0}"
 APK_NAME="huabu-${VERSION}.apk"
+KEYSTORE="${DEBUG_KEYSTORE:-$ROOT/debug.keystore}"
 
 SDK="${ANDROID_SDK:-${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}}"
 if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
@@ -88,10 +89,10 @@ else
   echo "==> 跳过 zipalign（当前工具不可执行）"
 fi
 
-if [ ! -f "$BUILD/debug.keystore" ]; then
+if [ ! -f "$KEYSTORE" ]; then
   echo "==> 生成 debug keystore"
   keytool -genkeypair -noprompt \
-    -keystore "$BUILD/debug.keystore" \
+    -keystore "$KEYSTORE" \
     -storepass android -keypass android \
     -alias androiddebugkey \
     -keyalg RSA -keysize 2048 -validity 10000 \
@@ -100,7 +101,7 @@ fi
 
 echo "==> 签名"
 "$APKSIGNER" sign \
-  --ks "$BUILD/debug.keystore" \
+  --ks "$KEYSTORE" \
   --ks-key-alias androiddebugkey \
   --ks-pass pass:android \
   --key-pass pass:android \
