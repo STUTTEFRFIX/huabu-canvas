@@ -1,0 +1,2180 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#f4efe4" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>节点画布</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f4efe4;
+        --paper-raised: #fbf8f0;
+        --paper-sunken: #efe8da;
+        --ink: #34312b;
+        --ink-soft: #6f6a60;
+        --ink-faint: #857c6f;
+        --rule: #ddd4c4;
+        --rule-strong: #cfc4b1;
+        --accent: #4d6670;
+        --accent-soft: rgba(77, 102, 112, 0.12);
+        --seal: #a65a45;
+        --danger: #964a36;
+        --font: "Noto Sans CJK SC", "Noto Sans SC", system-ui, -apple-system, "Microsoft YaHei",
+          sans-serif;
+        --serif: "Noto Serif CJK SC", "Noto Serif SC", "Songti SC", serif;
+        --safe-top: env(safe-area-inset-top, 0px);
+        --safe-bottom: env(safe-area-inset-bottom, 0px);
+      }
+
+      body.android {
+        --safe-top: 0px;
+        --safe-bottom: 0px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--paper);
+      }
+
+      body {
+        font-family: var(--font);
+        color: var(--ink);
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+      }
+
+      canvas {
+        display: block;
+        touch-action: none;
+        cursor: default;
+        background: var(--paper);
+      }
+
+      body.connecting canvas {
+        cursor: crosshair;
+      }
+
+      .topbar {
+        position: fixed;
+        inset: 0 0 auto 0;
+        z-index: 10;
+        padding: calc(var(--safe-top) + 14px) 20px 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        pointer-events: none;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--ink);
+        font-family: var(--serif);
+        font-size: 15px;
+        letter-spacing: 0.16em;
+      }
+
+      .brand b {
+        font-weight: 600;
+      }
+
+      .brand i {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--seal);
+      }
+
+      .zoom {
+        color: var(--ink-soft);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .hint {
+        position: fixed;
+        top: calc(var(--safe-top) + 48px);
+        left: 50%;
+        z-index: 12;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100vw - 32px);
+        padding: 5px 7px 5px 11px;
+        border: 1px solid var(--rule);
+        border-radius: 3px;
+        background: rgba(250, 246, 238, 0.78);
+        color: var(--ink-soft);
+        font-family: var(--serif);
+        font-size: 11.5px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+
+      .hint.hidden {
+        display: none;
+      }
+
+      .hint button {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 0;
+        border-radius: 2px;
+        background: transparent;
+        color: var(--ink-faint);
+        font-size: 14px;
+        line-height: 1;
+        pointer-events: auto;
+        touch-action: manipulation;
+      }
+
+      .toolbar {
+        position: fixed;
+        left: 50%;
+        bottom: calc(var(--safe-bottom) + 14px);
+        z-index: 20;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 0;
+        padding: 5px 6px;
+        border: 1px solid var(--rule);
+        border-radius: 14px;
+        background: rgba(251, 247, 239, 0.94);
+        box-shadow: 0 8px 24px rgba(80, 65, 45, 0.08);
+        backdrop-filter: blur(6px);
+      }
+
+      .toolbar button {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--ink-soft);
+        transition:
+          background 0.15s ease,
+          color 0.15s ease,
+          opacity 0.15s ease;
+        touch-action: manipulation;
+      }
+
+      .toolbar button:active {
+        background: rgba(80, 65, 45, 0.06);
+      }
+
+      .toolbar button.active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .toolbar button:disabled {
+        opacity: 0.25;
+      }
+
+      .toolbar svg {
+        width: 20px;
+        height: 20px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .toolbar .sep {
+        align-self: center;
+        width: 1px;
+        height: 18px;
+        margin: 0 4px;
+        background: var(--rule);
+      }
+
+      #editor {
+        position: fixed;
+        z-index: 30;
+        display: none;
+        min-width: 60px;
+        min-height: 44px;
+        border: 1.5px solid var(--accent);
+        outline: none;
+        resize: none;
+        overflow: hidden;
+        background: var(--paper-raised);
+        color: var(--ink);
+        font-family: var(--font);
+        caret-color: var(--accent);
+        box-shadow: 0 8px 22px rgba(80, 65, 45, 0.1);
+        -webkit-user-select: text;
+        user-select: text;
+        touch-action: manipulation;
+      }
+
+      #editor.show {
+        display: block;
+      }
+
+      #editor-done {
+        position: fixed;
+        top: calc(var(--safe-top) + 12px);
+        right: 14px;
+        z-index: 40;
+        display: none;
+        height: 32px;
+        padding: 0 15px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--ink);
+        color: var(--paper-raised);
+        font-family: var(--font);
+        font-size: 12.5px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        box-shadow: none;
+        touch-action: manipulation;
+      }
+
+      #editor-done.show {
+        display: block;
+      }
+
+      .menu {
+        position: fixed;
+        z-index: 50;
+        min-width: 200px;
+        max-width: calc(100vw - 24px);
+        padding: 5px;
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        background: var(--paper-raised);
+        box-shadow: 0 12px 30px rgba(80, 65, 45, 0.12);
+      }
+
+      .menu[hidden] {
+        display: none;
+      }
+
+      .menu-item {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 10px 11px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--ink);
+        font-family: var(--font);
+        font-size: 13.5px;
+        text-align: left;
+        touch-action: manipulation;
+      }
+
+      .menu-item:active {
+        background: rgba(80, 65, 45, 0.06);
+      }
+
+      .menu-item.danger {
+        color: var(--danger);
+      }
+
+      .menu-label {
+        padding: 8px 11px 3px;
+        color: var(--ink-soft);
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+      }
+
+      .swatches {
+        display: flex;
+        gap: 8px;
+        padding: 6px 11px 9px;
+      }
+
+      .swatch {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 1px solid var(--rule);
+        border-radius: 50%;
+        touch-action: manipulation;
+      }
+
+      .swatch.active {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent-soft);
+      }
+
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: calc(var(--safe-bottom) + 82px);
+        z-index: 60;
+        max-width: calc(100vw - 48px);
+        padding: 8px 14px;
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        background: var(--paper-raised);
+        color: var(--ink);
+        font-size: 12.5px;
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-50%) translateY(8px);
+        transition:
+          opacity 0.18s ease,
+          transform 0.18s ease;
+        box-shadow: 0 6px 18px rgba(80, 65, 45, 0.08);
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+
+      .empty {
+        position: fixed;
+        inset: 0;
+        z-index: 5;
+        display: grid;
+        place-content: center;
+        gap: 10px;
+        text-align: center;
+        color: var(--ink-soft);
+        pointer-events: none;
+      }
+
+      .empty[hidden] {
+        display: none;
+      }
+
+      .empty .title {
+        color: var(--ink-soft);
+        font-family: var(--serif);
+        font-size: 20px;
+        letter-spacing: 0.12em;
+      }
+
+      .empty .rule {
+        width: 36px;
+        height: 1px;
+        margin: 0 auto;
+        background: var(--rule-strong);
+      }
+
+      .empty .sub {
+        font-size: 12px;
+        letter-spacing: 0.06em;
+      }
+
+      button:focus-visible {
+        outline: 1.5px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      @media (hover: hover) {
+        .toolbar button:hover {
+          background: rgba(80, 65, 45, 0.05);
+        }
+
+        .menu-item:hover {
+          background: rgba(80, 65, 45, 0.05);
+        }
+
+        .hint button:hover {
+          color: var(--ink);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      @media (max-width: 420px) {
+        .hint {
+          font-size: 11px;
+          gap: 5px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <div class="empty" id="empty" hidden>
+      <div class="title">纸上还空着</div>
+      <div class="rule"></div>
+      <div class="sub">双击空白，写下第一个想法</div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand"><i></i><b>节点画布</b></div>
+      <div class="zoom" id="zoom">100%</div>
+    </header>
+
+    <div class="hint" id="hint">
+      <span id="hint-text">双击空白写下一个想法 · 长按更多 · 双指缩放</span>
+      <button id="hint-close" aria-label="关闭提示">×</button>
+    </div>
+
+    <nav class="toolbar" aria-label="画布工具栏">
+      <button id="btn-add" aria-label="新建节点" title="新建节点">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+      <button id="btn-connect" aria-label="连线模式" title="连线模式">
+        <svg viewBox="0 0 24 24">
+          <circle cx="7" cy="17" r="2.6" />
+          <circle cx="17" cy="7" r="2.6" />
+          <path d="M9 15 15 9" />
+        </svg>
+      </button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="btn-delete" aria-label="删除选中节点" title="删除选中节点" disabled>
+        <svg viewBox="0 0 24 24">
+          <path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5" />
+        </svg>
+      </button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="btn-undo" aria-label="撤销" title="撤销" disabled>
+        <svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M4 12h9a6 6 0 0 1 6 6" /></svg>
+      </button>
+      <button id="btn-redo" aria-label="重做" title="重做" disabled>
+        <svg viewBox="0 0 24 24"><path d="m15 7 5 5-5 5M20 12h-9a6 6 0 0 0-6 6" /></svg>
+      </button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="btn-more" aria-label="更多" title="更多">
+        <svg viewBox="0 0 24 24">
+          <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+          <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+    </nav>
+
+    <textarea id="editor" spellcheck="false" aria-label="编辑节点文字"></textarea>
+    <button id="editor-done" type="button">完成</button>
+    <div id="menu" class="menu" hidden></div>
+    <div id="toast" class="toast" role="status"></div>
+    <input id="file-input" type="file" accept="application/json,.json" hidden />
+
+    <script>
+      (() => {
+        "use strict";
+
+        const canvas = document.getElementById("stage");
+        const ctx = canvas.getContext("2d");
+        const editor = document.getElementById("editor");
+        const doneBtn = document.getElementById("editor-done");
+        const menuEl = document.getElementById("menu");
+        const hintEl = document.getElementById("hint");
+        const hintText = document.getElementById("hint-text");
+        const toastEl = document.getElementById("toast");
+        const fileInput = document.getElementById("file-input");
+        const zoomEl = document.getElementById("zoom");
+        const emptyEl = document.getElementById("empty");
+        const addBtn = document.getElementById("btn-add");
+        const connectBtn = document.getElementById("btn-connect");
+        const deleteBtn = document.getElementById("btn-delete");
+        const undoBtn = document.getElementById("btn-undo");
+        const redoBtn = document.getElementById("btn-redo");
+        const moreBtn = document.getElementById("btn-more");
+
+        const FONT_FAMILY =
+          '"Noto Sans CJK SC", "Noto Sans SC", system-ui, -apple-system, "Microsoft YaHei", sans-serif';
+        const FONT = "16px " + FONT_FAMILY;
+        const FONT_SIZE = 16;
+        const LINE_HEIGHT = 26;
+        const PAD_X = 18;
+        const PAD_Y = 16;
+        const MIN_W = 160;
+        const MAX_W = 280;
+        const MIN_H = 52;
+        const NODE_COLORS = ["#fbf8f0", "#f4ead8", "#e9efe3", "#f3e4df", "#e5edf0", "#eee7ee"];
+        const COLORS = {
+          paper: "#f4efe4",
+          ink: "#34312b",
+          inkSoft: "#6f6a60",
+          rule: "rgba(70, 60, 45, 0.14)",
+          accent: "#4d6670",
+          edge: "rgba(70, 64, 55, 0.58)",
+          edgeActive: "rgba(77, 102, 112, 0.8)",
+          dot: "rgba(110, 100, 84, 0.18)",
+          dotAxis: "rgba(110, 100, 84, 0.3)",
+          shadow: "rgba(80, 65, 45, 0.055)",
+        };
+        const STORAGE_KEY = "node-canvas-doc-v1";
+
+        const doc = { nodes: [], edges: [] };
+        const cam = { x: 0, y: 0, scale: 1 };
+        const viewport = { w: 1, h: 1, dpr: 1 };
+        const history = { states: [], index: 0 };
+
+        let selectedId = null;
+        let mode = "select";
+        let connectFrom = null;
+        let editing = null;
+        let gesture = null;
+        let pinch = null;
+        let longPressTimer = null;
+        let longPressed = false;
+        let suppressTap = false;
+        let lastTap = null;
+        let rafId = 0;
+        let saveTimer = null;
+        let storageWarned = false;
+        let toastTimer = null;
+        const pointers = new Map();
+        let paperPattern = null;
+
+        function uid() {
+          if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+          return "id-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+        }
+
+        function clamp(value, min, max) {
+          return Math.max(min, Math.min(max, value));
+        }
+
+        function clampScale(scale) {
+          return clamp(scale, 0.01, 128);
+        }
+
+        function nodeById(id) {
+          if (!id) return null;
+          return doc.nodes.find((n) => n.id === id) || null;
+        }
+
+        function worldToScreen(x, y) {
+          return { x: x * cam.scale + cam.x, y: y * cam.scale + cam.y };
+        }
+
+        function screenToWorld(x, y) {
+          return { x: (x - cam.x) / cam.scale, y: (y - cam.y) / cam.scale };
+        }
+
+        function makePaperPattern() {
+          const size = 220;
+          const tile = document.createElement("canvas");
+          tile.width = size;
+          tile.height = size;
+          const g = tile.getContext("2d");
+          const image = g.createImageData(size, size);
+          for (let i = 0; i < size * size; i++) {
+            const alpha = Math.random() < 0.14 ? 3 + Math.random() * 7 : 0;
+            const value = 95 + Math.random() * 35;
+            image.data[i * 4] = value;
+            image.data[i * 4 + 1] = value - 6;
+            image.data[i * 4 + 2] = value - 16;
+            image.data[i * 4 + 3] = alpha;
+          }
+          g.putImageData(image, 0, 0);
+          g.strokeStyle = "rgba(120, 105, 85, 0.05)";
+          g.lineWidth = 1;
+          for (let i = 0; i < 80; i++) {
+            const x = Math.random() * size;
+            const y = Math.random() * size;
+            g.beginPath();
+            g.moveTo(x, y);
+            g.lineTo(x + 4 + Math.random() * 10, y + (Math.random() - 0.5) * 0.6);
+            g.stroke();
+          }
+          paperPattern = ctx.createPattern(tile, "repeat");
+        }
+
+        function requestRender() {
+          if (rafId) return;
+          rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            render();
+          });
+        }
+
+        function roundRectPath(c, x, y, w, h, r) {
+          const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+          c.beginPath();
+          c.moveTo(x + rr, y);
+          c.arcTo(x + w, y, x + w, y + h, rr);
+          c.arcTo(x + w, y + h, x, y + h, rr);
+          c.arcTo(x, y + h, x, y, rr);
+          c.arcTo(x, y, x + w, y, rr);
+          c.closePath();
+        }
+
+        function wrapText(text, width) {
+          ctx.font = FONT;
+          const lines = [];
+          const paragraphs = String(text).split("\n");
+          for (const paragraph of paragraphs) {
+            if (paragraph === "") {
+              lines.push("");
+              continue;
+            }
+            let line = "";
+            for (const ch of Array.from(paragraph)) {
+              const next = line + ch;
+              if (line && ctx.measureText(next).width > width) {
+                lines.push(line);
+                line = ch;
+              } else {
+                line = next;
+              }
+            }
+            lines.push(line);
+          }
+          return lines.length ? lines : [""];
+        }
+
+        function layoutNode(node, resizeWidth) {
+          ctx.font = FONT;
+          const text = String(node.text || "");
+          if (resizeWidth) {
+            let widest = 0;
+            for (const paragraph of text.split("\n")) {
+              widest = Math.max(widest, ctx.measureText(paragraph).width);
+            }
+            node.w = clamp(Math.ceil(widest + PAD_X * 2), MIN_W, MAX_W);
+          }
+          node.w = clamp(Number(node.w) || MIN_W, MIN_W, MAX_W);
+          node.lines = wrapText(text, node.w - PAD_X * 2);
+          node.h = Math.max(MIN_H, node.lines.length * LINE_HEIGHT + PAD_Y * 2);
+        }
+
+        function normalizeNode(raw) {
+          return {
+            id: typeof raw.id === "string" && raw.id ? raw.id : uid(),
+            x: Number.isFinite(raw.x) ? raw.x : 0,
+            y: Number.isFinite(raw.y) ? raw.y : 0,
+            w: Number.isFinite(raw.w) ? raw.w : MIN_W,
+            h: Number.isFinite(raw.h) ? raw.h : MIN_H,
+            text: typeof raw.text === "string" ? raw.text : "",
+            color: NODE_COLORS.includes(raw.color) ? raw.color : NODE_COLORS[0],
+            lines: [],
+          };
+        }
+
+        function normalizeEdge(raw) {
+          return {
+            id: typeof raw.id === "string" && raw.id ? raw.id : uid(),
+            from: String(raw.from || ""),
+            to: String(raw.to || ""),
+          };
+        }
+
+        // ---------- 渲染 ----------
+
+        function render() {
+          const { w, h, dpr } = viewport;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.fillStyle = COLORS.paper;
+          ctx.fillRect(0, 0, w, h);
+          if (paperPattern) {
+            ctx.fillStyle = paperPattern;
+            ctx.fillRect(0, 0, w, h);
+          }
+          drawDots();
+          drawEdges();
+          drawNodes();
+          drawSelection();
+          const zoomText = Math.round(cam.scale * 100) + "%";
+          if (zoomEl.textContent !== zoomText) zoomEl.textContent = zoomText;
+        }
+
+        function drawDots() {
+          let spacing = 32;
+          while (spacing * cam.scale < 20) spacing *= 2;
+          while (spacing * cam.scale > 80) spacing /= 2;
+
+          const topLeft = screenToWorld(0, 0);
+          const bottomRight = screenToWorld(viewport.w, viewport.h);
+          const startX = Math.floor(topLeft.x / spacing) * spacing;
+          const startY = Math.floor(topLeft.y / spacing) * spacing;
+
+          ctx.fillStyle = COLORS.dot;
+          for (let x = startX; x <= bottomRight.x; x += spacing) {
+            for (let y = startY; y <= bottomRight.y; y += spacing) {
+              const axis = Math.abs(x) < spacing * 0.25 || Math.abs(y) < spacing * 0.25;
+              if (axis) continue;
+              const sx = x * cam.scale + cam.x;
+              const sy = y * cam.scale + cam.y;
+              ctx.fillRect(sx - 0.55, sy - 0.55, 1.1, 1.1);
+            }
+          }
+
+          ctx.fillStyle = COLORS.dotAxis;
+          for (let x = startX; x <= bottomRight.x; x += spacing) {
+            for (let y = startY; y <= bottomRight.y; y += spacing) {
+              const axis = Math.abs(x) < spacing * 0.25 || Math.abs(y) < spacing * 0.25;
+              if (!axis) continue;
+              const sx = x * cam.scale + cam.x;
+              const sy = y * cam.scale + cam.y;
+              ctx.fillRect(sx - 1.1, sy - 1.1, 2.2, 2.2);
+            }
+          }
+        }
+
+        function borderPoint(node, towardX, towardY) {
+          const cx = node.x + node.w / 2;
+          const cy = node.y + node.h / 2;
+          const dx = towardX - cx;
+          const dy = towardY - cy;
+          const len = Math.hypot(dx, dy);
+          if (len < 0.001) return { x: cx, y: cy };
+          const ux = dx / len;
+          const uy = dy / len;
+          const tx = ux !== 0 ? node.w / 2 / Math.abs(ux) : Infinity;
+          const ty = uy !== 0 ? node.h / 2 / Math.abs(uy) : Infinity;
+          const t = Math.min(tx, ty);
+          return { x: cx + ux * t, y: cy + uy * t };
+        }
+
+        function edgeScreenPoints(edge) {
+          const a = nodeById(edge.from);
+          const b = nodeById(edge.to);
+          if (!a || !b) return null;
+          const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+          const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+          const startWorld = borderPoint(a, bc.x, bc.y);
+          const endWorld = borderPoint(b, ac.x, ac.y);
+          const p1 = worldToScreen(startWorld.x, startWorld.y);
+          const p2 = worldToScreen(endWorld.x, endWorld.y);
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const length = Math.hypot(dx, dy) || 1;
+          let parity = 0;
+          for (let i = 0; i < edge.id.length; i++) parity = (parity + edge.id.charCodeAt(i)) % 2;
+          const bend = Math.min(34, Math.max(6, length * 0.055)) * (parity === 0 ? 1 : -1);
+          return {
+            p1,
+            p2,
+            control: {
+              x: (p1.x + p2.x) / 2 - (dy / length) * bend,
+              y: (p1.y + p2.y) / 2 + (dx / length) * bend,
+            },
+          };
+        }
+
+        function quadraticPoint(p1, control, p2, t) {
+          const mt = 1 - t;
+          return {
+            x: mt * mt * p1.x + 2 * mt * t * control.x + t * t * p2.x,
+            y: mt * mt * p1.y + 2 * mt * t * control.y + t * t * p2.y,
+          };
+        }
+
+        function hitEdge(sx, sy) {
+          for (let i = doc.edges.length - 1; i >= 0; i--) {
+            const points = edgeScreenPoints(doc.edges[i]);
+            if (!points) continue;
+            let closest = Infinity;
+            for (let step = 0; step <= 18; step++) {
+              const point = quadraticPoint(points.p1, points.control, points.p2, step / 18);
+              closest = Math.min(closest, Math.hypot(sx - point.x, sy - point.y));
+            }
+            if (closest <= 12) return doc.edges[i];
+          }
+          return null;
+        }
+
+        function drawEdges() {
+          for (const edge of doc.edges) {
+            const points = edgeScreenPoints(edge);
+            if (!points) continue;
+            const { p1, p2, control } = points;
+            const active = selectedId && (edge.from === selectedId || edge.to === selectedId);
+            const color = active ? COLORS.edgeActive : COLORS.edge;
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = active ? 1.8 : 1.25;
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.quadraticCurveTo(control.x, control.y, p2.x, p2.y);
+            ctx.stroke();
+
+            const screenLength = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            if (screenLength > 6) {
+              const angle = Math.atan2(p2.y - control.y, p2.x - control.x);
+              const size = clamp(screenLength * 0.12, 3, 9);
+              ctx.beginPath();
+              ctx.moveTo(p2.x - Math.cos(angle - 0.5) * size, p2.y - Math.sin(angle - 0.5) * size);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.lineTo(p2.x - Math.cos(angle + 0.5) * size, p2.y - Math.sin(angle + 0.5) * size);
+              ctx.stroke();
+            }
+          }
+        }
+
+        function drawNodes() {
+          ctx.textBaseline = "top";
+          for (const node of doc.nodes) {
+            const p = worldToScreen(node.x, node.y);
+            const w = node.w * cam.scale;
+            const h = node.h * cam.scale;
+            if (p.x + w < -24 || p.y + h < -24 || p.x > viewport.w + 24 || p.y > viewport.h + 24) continue;
+
+            const radius = Math.max(3, 10 * cam.scale);
+            roundRectPath(ctx, p.x + 1.5, p.y + 2.5, w, h, radius);
+            ctx.fillStyle = COLORS.shadow;
+            ctx.fill();
+
+            roundRectPath(ctx, p.x, p.y, w, h, radius);
+            ctx.fillStyle = node.color;
+            ctx.fill();
+            ctx.strokeStyle = COLORS.rule;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            const fontSize = FONT_SIZE * cam.scale;
+            if (fontSize < 5) continue;
+            ctx.font = fontSize + "px " + FONT_FAMILY;
+            ctx.fillStyle = COLORS.ink;
+            const padX = PAD_X * cam.scale;
+            const padY = PAD_Y * cam.scale;
+            const lineHeight = LINE_HEIGHT * cam.scale;
+            const lines = node.lines || [];
+            for (let i = 0; i < lines.length; i++) {
+              ctx.fillText(lines[i], p.x + padX, p.y + padY + i * lineHeight);
+            }
+          }
+        }
+
+        function drawSelection() {
+          const node = nodeById(selectedId);
+          if (!node) return;
+          const p = worldToScreen(node.x, node.y);
+          const w = node.w * cam.scale;
+          const h = node.h * cam.scale;
+          ctx.strokeStyle = COLORS.accent;
+          ctx.lineWidth = 1.5;
+          roundRectPath(ctx, p.x - 3, p.y - 3, w + 6, h + 6, Math.max(4, 12 * cam.scale));
+          ctx.stroke();
+
+          if (mode === "connect" && connectFrom === node.id) {
+            ctx.setLineDash([5, 4]);
+            ctx.strokeStyle = "rgba(77, 102, 112, 0.5)";
+            roundRectPath(ctx, p.x - 7, p.y - 7, w + 14, h + 14, Math.max(6, 16 * cam.scale));
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+
+        // ---------- 相机 ----------
+
+        function zoomAt(sx, sy, factor) {
+          const before = screenToWorld(sx, sy);
+          cam.scale = clampScale(cam.scale * factor);
+          cam.x = sx - before.x * cam.scale;
+          cam.y = sy - before.y * cam.scale;
+          requestRender();
+        }
+
+        function fitView() {
+          if (!doc.nodes.length) {
+            cam.scale = 1;
+            cam.x = viewport.w / 2;
+            cam.y = viewport.h / 2;
+            requestRender();
+            return;
+          }
+          let minX = Infinity;
+          let minY = Infinity;
+          let maxX = -Infinity;
+          let maxY = -Infinity;
+          for (const n of doc.nodes) {
+            minX = Math.min(minX, n.x);
+            minY = Math.min(minY, n.y);
+            maxX = Math.max(maxX, n.x + n.w);
+            maxY = Math.max(maxY, n.y + n.h);
+          }
+          const bw = Math.max(1, maxX - minX);
+          const bh = Math.max(1, maxY - minY);
+          const topInset = 120;
+          const bottomInset = 150;
+          const sideInset = 28;
+          const availW = Math.max(80, viewport.w - sideInset * 2);
+          const availH = Math.max(80, viewport.h - topInset - bottomInset);
+          const scale = clampScale(Math.min(availW / bw, availH / bh, 1.6));
+          cam.scale = scale;
+          cam.x = viewport.w / 2 - ((minX + maxX) / 2) * scale;
+          cam.y = topInset + availH / 2 - ((minY + maxY) / 2) * scale;
+          requestRender();
+        }
+
+        // ---------- 历史 ----------
+
+        function snapshotDoc() {
+          return JSON.stringify({
+            nodes: doc.nodes.map((n) => ({
+              id: n.id,
+              x: n.x,
+              y: n.y,
+              w: n.w,
+              h: n.h,
+              text: n.text,
+              color: n.color,
+            })),
+            edges: doc.edges.map((e) => ({ id: e.id, from: e.from, to: e.to })),
+          });
+        }
+
+        function resetHistory() {
+          history.states = [snapshotDoc()];
+          history.index = 0;
+          updateUI();
+        }
+
+        function commitHistory() {
+          const snap = snapshotDoc();
+          if (history.states[history.index] === snap) {
+            updateUI();
+            return;
+          }
+          history.states = history.states.slice(0, history.index + 1);
+          history.states.push(snap);
+          if (history.states.length > 100) history.states.shift();
+          history.index = history.states.length - 1;
+          updateUI();
+        }
+
+        function applySnapshot(raw) {
+          const data = JSON.parse(raw);
+          doc.nodes = data.nodes.map(normalizeNode);
+          doc.edges = data.edges.map(normalizeEdge).filter((e) => nodeById(e.from) && nodeById(e.to));
+          for (const node of doc.nodes) layoutNode(node, true);
+          if (!nodeById(selectedId)) selectedId = null;
+          if (connectFrom && !nodeById(connectFrom)) connectFrom = null;
+          requestRender();
+          updateUI();
+        }
+
+        function undo() {
+          commitEditing();
+          if (history.index <= 0) return;
+          history.index -= 1;
+          applySnapshot(history.states[history.index]);
+          saveLater();
+          showToast("已撤销");
+        }
+
+        function redo() {
+          commitEditing();
+          if (history.index >= history.states.length - 1) return;
+          history.index += 1;
+          applySnapshot(history.states[history.index]);
+          saveLater();
+          showToast("已重做");
+        }
+
+        // ---------- 存储 ----------
+
+        function serializeDoc() {
+          return {
+            version: 1,
+            nodes: doc.nodes.map((n) => ({
+              id: n.id,
+              x: n.x,
+              y: n.y,
+              w: n.w,
+              h: n.h,
+              text: n.text,
+              color: n.color,
+            })),
+            edges: doc.edges.map((e) => ({ id: e.id, from: e.from, to: e.to })),
+            camera: { x: cam.x, y: cam.y, scale: cam.scale },
+          };
+        }
+
+        function saveNow() {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeDoc()));
+          } catch (error) {
+            if (!storageWarned) {
+              storageWarned = true;
+              showToast("本地保存不可用，记得用“导出 JSON”备份");
+            }
+          }
+        }
+
+        function saveLater() {
+          clearTimeout(saveTimer);
+          saveTimer = setTimeout(saveNow, 300);
+        }
+
+        function loadDoc() {
+          let raw = null;
+          try {
+            raw = localStorage.getItem(STORAGE_KEY);
+          } catch (error) {
+            raw = null;
+          }
+          if (!raw) return false;
+          try {
+            const data = JSON.parse(raw);
+            if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) return false;
+            doc.nodes = data.nodes.map(normalizeNode);
+            doc.edges = data.edges
+              .map(normalizeEdge)
+              .filter((e) => nodeById(e.from) && nodeById(e.to));
+            for (const node of doc.nodes) layoutNode(node, true);
+            if (
+              data.camera &&
+              Number.isFinite(data.camera.x) &&
+              Number.isFinite(data.camera.y) &&
+              Number.isFinite(data.camera.scale)
+            ) {
+              cam.x = data.camera.x;
+              cam.y = data.camera.y;
+              cam.scale = clampScale(data.camera.scale);
+            } else {
+              fitView();
+            }
+            return true;
+          } catch (error) {
+            return false;
+          }
+        }
+
+        // ---------- 节点操作 ----------
+
+        function createNodeAt(worldX, worldY, withEdit = true) {
+          const node = {
+            id: uid(),
+            x: worldX - MIN_W / 2,
+            y: worldY - MIN_H / 2,
+            w: 200,
+            h: MIN_H,
+            text: "",
+            color: NODE_COLORS[0],
+            lines: [""],
+          };
+          layoutNode(node, false);
+          node.x = worldX - node.w / 2;
+          node.y = worldY - node.h / 2;
+          doc.nodes.push(node);
+          selectedId = node.id;
+          lastTap = null;
+          commitHistory();
+          saveLater();
+          requestRender();
+          if (withEdit) startEditing(node, true);
+          return node;
+        }
+
+        function removeNode(id, commit) {
+          doc.nodes = doc.nodes.filter((n) => n.id !== id);
+          doc.edges = doc.edges.filter((e) => e.from !== id && e.to !== id);
+          if (selectedId === id) selectedId = null;
+          if (connectFrom === id) connectFrom = null;
+          if (commit) {
+            commitHistory();
+            saveLater();
+          }
+          requestRender();
+          updateUI();
+        }
+
+        function deleteSelected() {
+          if (!selectedId) return;
+          removeNode(selectedId, true);
+          showToast("已删除");
+        }
+
+        function removeEdge(edge) {
+          doc.edges = doc.edges.filter((e) => e.id !== edge.id);
+          commitHistory();
+          saveLater();
+          requestRender();
+          updateUI();
+          showToast("已删除连线");
+        }
+
+        function setNodeColor(node, color) {
+          if (node.color === color) return;
+          node.color = color;
+          commitHistory();
+          saveLater();
+          requestRender();
+        }
+
+        // ---------- 编辑 ----------
+
+        function ensureEditableZoom(node) {
+          const min = 0.85;
+          const max = 2.5;
+          const center = { x: node.x + node.w / 2, y: node.y + node.h / 2 };
+          const screen = worldToScreen(center.x, center.y);
+          if (cam.scale < min) {
+            zoomAt(screen.x, screen.y, min / cam.scale);
+          } else if (cam.scale > max) {
+            zoomAt(screen.x, screen.y, max / cam.scale);
+          }
+        }
+
+        function startEditing(node, isNew) {
+          if (editing) commitEditing();
+          ensureEditableZoom(node);
+          layoutNode(node, false);
+          editing = {
+            node,
+            isNew,
+            beforeText: node.text,
+            beforeW: node.w,
+            beforeH: node.h,
+          };
+          selectedId = node.id;
+          lastTap = null;
+          editor.value = node.text;
+          editor.classList.add("show");
+          doneBtn.classList.add("show");
+          positionEditor();
+          requestRender();
+          editor.focus({ preventScroll: true });
+          const end = editor.value.length;
+          try {
+            editor.setSelectionRange(end, end);
+          } catch (error) {
+            // 某些 WebView 不支持 setSelectionRange
+          }
+          setTimeout(() => {
+            if (!editing) return;
+            positionEditor();
+            ensureNodeVisible(editing.node);
+          }, 280);
+          updateUI();
+        }
+
+        function positionEditor() {
+          if (!editing) return;
+          const node = editing.node;
+          const p = worldToScreen(node.x, node.y);
+          const k = cam.scale;
+          editor.style.left = p.x + "px";
+          editor.style.top = p.y + "px";
+          editor.style.width = Math.max(60, node.w * k) + "px";
+          editor.style.height = Math.max(44, node.h * k) + "px";
+          editor.style.fontSize = FONT_SIZE * k + "px";
+          editor.style.lineHeight = LINE_HEIGHT * k + "px";
+          editor.style.padding = PAD_Y * k + "px " + PAD_X * k + "px";
+          editor.style.borderRadius = Math.max(6, 10 * k) + "px";
+          editor.style.background = node.color;
+        }
+
+        function ensureNodeVisible(node) {
+          if (!node) return;
+          const vh = (window.visualViewport && window.visualViewport.height) || viewport.h;
+          const p = worldToScreen(node.x, node.y);
+          const bottom = p.y + node.h * cam.scale;
+          const limit = vh - 120;
+          if (bottom > limit) {
+            cam.y -= bottom - limit;
+            positionEditor();
+            requestRender();
+          } else if (p.y < 70) {
+            cam.y += 70 - p.y;
+            positionEditor();
+            requestRender();
+          }
+        }
+
+        function commitEditing() {
+          if (!editing) return;
+          const { node, isNew, beforeText, beforeW, beforeH } = editing;
+          const text = editor.value;
+          const centerX = node.x + beforeW / 2;
+          const centerY = node.y + beforeH / 2;
+          editing = null;
+          editor.classList.remove("show");
+          doneBtn.classList.remove("show");
+          editor.blur();
+
+          node.text = text;
+          const empty = text.trim() === "";
+          if (empty) {
+            removeNode(node.id, false);
+            if (isNew) {
+              if (history.states.length > 1) {
+                history.states.pop();
+                history.index = Math.max(0, history.index - 1);
+              }
+            } else {
+              commitHistory();
+            }
+            selectedId = null;
+            saveLater();
+          } else {
+            layoutNode(node, true);
+            if (isNew) {
+              node.x = centerX - node.w / 2;
+              node.y = centerY - node.h / 2;
+              if (history.states.length) history.states[history.index] = snapshotDoc();
+            } else if (text !== beforeText || node.w !== beforeW) {
+              commitHistory();
+            }
+            saveLater();
+          }
+          updateUI();
+          requestRender();
+        }
+
+        // ---------- 菜单与提示 ----------
+
+        function openMenu(x, y, items, options) {
+          const opts = options || {};
+          menuEl.innerHTML = "";
+          for (const item of items) {
+            if (item.type === "label") {
+              const label = document.createElement("div");
+              label.className = "menu-label";
+              label.textContent = item.label;
+              menuEl.appendChild(label);
+              continue;
+            }
+            if (item.type === "swatches") {
+              const row = document.createElement("div");
+              row.className = "swatches";
+              for (const color of NODE_COLORS) {
+                const swatch = document.createElement("button");
+                swatch.type = "button";
+                swatch.className = "swatch" + (item.current === color ? " active" : "");
+                swatch.style.background = color;
+                swatch.setAttribute("aria-label", "节点颜色 " + color);
+                swatch.addEventListener("click", () => {
+                  closeMenu();
+                  item.action(color);
+                });
+                row.appendChild(swatch);
+              }
+              menuEl.appendChild(row);
+              continue;
+            }
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "menu-item" + (item.danger ? " danger" : "");
+            button.textContent = item.label;
+            button.addEventListener("click", () => {
+              closeMenu();
+              item.action();
+            });
+            menuEl.appendChild(button);
+          }
+          menuEl.hidden = false;
+          menuEl.style.left = "0px";
+          menuEl.style.top = "0px";
+          const rect = menuEl.getBoundingClientRect();
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          const left = clamp(x, 8, Math.max(8, vw - rect.width - 8));
+          const top = clamp(opts.above ? y - rect.height - 8 : y, 8, Math.max(8, vh - rect.height - 8));
+          menuEl.style.left = left + "px";
+          menuEl.style.top = top + "px";
+        }
+
+        function closeMenu() {
+          menuEl.hidden = true;
+        }
+
+        function openNodeMenu(node, x, y) {
+          openMenu(x, y, [
+            { label: "编辑文字", action: () => startEditing(node, false) },
+            {
+              label: connectFrom === node.id ? "取消连线起点" : "从这里开始连线",
+              action: () => {
+                mode = "connect";
+                connectFrom = node.id;
+                selectedId = node.id;
+                updateUI();
+                requestRender();
+                showToast("再点一个节点完成连线");
+              },
+            },
+            { type: "label", label: "节点颜色" },
+            { type: "swatches", current: node.color, action: (color) => setNodeColor(node, color) },
+            { label: "删除节点", danger: true, action: () => removeNode(node.id, true) },
+          ]);
+        }
+
+        function openEmptyMenu(x, y) {
+          const world = screenToWorld(x, y);
+          openMenu(x, y, [
+            { label: "在此新建文本节点", action: () => createNodeAt(world.x, world.y) },
+            { label: "适应画布", action: fitView },
+          ]);
+        }
+
+        function openEdgeMenu(edge, x, y) {
+          openMenu(x, y, [{ label: "删除这条连线", danger: true, action: () => removeEdge(edge) }]);
+        }
+
+        function showToast(message) {
+          toastEl.textContent = message;
+          toastEl.classList.add("show");
+          clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1800);
+        }
+
+        function updateHint() {
+          hintText.textContent =
+            mode === "connect"
+              ? connectFrom
+                ? "再点一个节点完成连线"
+                : "点选一个节点作为连线起点"
+              : "双击空白写下一个想法 · 长按更多 · 双指缩放";
+        }
+
+        function updateUI() {
+          undoBtn.disabled = history.index <= 0;
+          redoBtn.disabled = history.index >= history.states.length - 1;
+          deleteBtn.disabled = !selectedId;
+          connectBtn.classList.toggle("active", mode === "connect");
+          document.body.classList.toggle("connecting", mode === "connect");
+          emptyEl.hidden = doc.nodes.length > 0;
+          updateHint();
+        }
+
+        // ---------- 交互 ----------
+
+        function cancelLongPress() {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+
+        function scheduleLongPress(point) {
+          cancelLongPress();
+          longPressTimer = setTimeout(() => {
+            longPressTimer = null;
+            if (!gesture || gesture.moved || gesture.suppress || pointers.size !== 1) return;
+            gesture.suppress = true;
+            longPressed = true;
+            if (gesture.type === "drag" && gesture.node) {
+              selectedId = gesture.node.id;
+              updateUI();
+              requestRender();
+              openNodeMenu(gesture.node, point.x, point.y);
+            } else {
+              const edge = hitEdge(point.x, point.y);
+              if (edge) openEdgeMenu(edge, point.x, point.y);
+              else openEmptyMenu(point.x, point.y);
+            }
+          }, 500);
+        }
+
+        function hitNode(sx, sy) {
+          const p = screenToWorld(sx, sy);
+          for (let i = doc.nodes.length - 1; i >= 0; i--) {
+            const n = doc.nodes[i];
+            if (p.x >= n.x && p.x <= n.x + n.w && p.y >= n.y && p.y <= n.y + n.h) return n;
+          }
+          return null;
+        }
+
+        function startPinch() {
+          const pts = [...pointers.values()].slice(0, 2);
+          if (pts.length < 2) {
+            pinch = null;
+            return;
+          }
+          pinch = {
+            mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+            dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          };
+        }
+
+        function doPinch() {
+          const pts = [...pointers.values()].slice(0, 2);
+          if (pts.length < 2) return;
+          const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          if (!pinch || pinch.dist < 1) {
+            pinch = { mid, dist };
+            return;
+          }
+          const factor = clamp(dist / pinch.dist, 0.5, 2);
+          zoomAt(mid.x, mid.y, factor);
+          cam.x += mid.x - pinch.mid.x;
+          cam.y += mid.y - pinch.mid.y;
+          pinch = { mid, dist };
+          requestRender();
+        }
+
+        function onPointerDown(event) {
+          if (event.pointerType === "mouse" && event.button !== 0) return;
+          event.preventDefault();
+
+          if (editing) {
+            commitEditing();
+            return;
+          }
+          if (!menuEl.hidden) closeMenu();
+
+          try {
+            canvas.setPointerCapture(event.pointerId);
+          } catch (error) {
+            // 部分浏览器不支持捕获
+          }
+
+          const point = { x: event.clientX, y: event.clientY };
+          pointers.set(event.pointerId, point);
+
+          if (pointers.size === 1) {
+            suppressTap = false;
+            longPressed = false;
+            const node = hitNode(point.x, point.y);
+            if (node) {
+              selectedId = node.id;
+              updateUI();
+            }
+            gesture = node
+              ? {
+                  type: "drag",
+                  pointerId: event.pointerId,
+                  node,
+                  startX: point.x,
+                  startY: point.y,
+                  lastX: point.x,
+                  lastY: point.y,
+                  moved: false,
+                  suppress: false,
+                }
+              : {
+                  type: "pan",
+                  pointerId: event.pointerId,
+                  startX: point.x,
+                  startY: point.y,
+                  lastX: point.x,
+                  lastY: point.y,
+                  moved: false,
+                  suppress: false,
+                };
+            scheduleLongPress(point);
+          } else if (pointers.size === 2) {
+            cancelLongPress();
+            if (gesture && gesture.type === "drag" && gesture.moved) commitHistory();
+            gesture = null;
+            suppressTap = true;
+            startPinch();
+          } else {
+            cancelLongPress();
+          }
+          requestRender();
+        }
+
+        function onPointerMove(event) {
+          if (!pointers.has(event.pointerId)) return;
+          event.preventDefault();
+          const point = { x: event.clientX, y: event.clientY };
+          pointers.set(event.pointerId, point);
+
+          if (pointers.size >= 2) {
+            doPinch();
+            return;
+          }
+          if (!gesture || gesture.suppress) return;
+
+          const dx = point.x - gesture.lastX;
+          const dy = point.y - gesture.lastY;
+          if (Math.hypot(point.x - gesture.startX, point.y - gesture.startY) > 4) {
+            if (!gesture.moved) {
+              gesture.moved = true;
+              cancelLongPress();
+            }
+          }
+          if (gesture.type === "drag") {
+            gesture.node.x += dx / cam.scale;
+            gesture.node.y += dy / cam.scale;
+          } else {
+            cam.x += dx;
+            cam.y += dy;
+          }
+          gesture.lastX = point.x;
+          gesture.lastY = point.y;
+          requestRender();
+        }
+
+        function onTapNode(node, point) {
+          if (mode === "connect") {
+            handleConnectTap(node);
+            return;
+          }
+          const now = performance.now();
+          const isDouble =
+            lastTap &&
+            lastTap.nodeId === node.id &&
+            now - lastTap.time < 320 &&
+            Math.hypot(point.x - lastTap.x, point.y - lastTap.y) < 26;
+          if (isDouble) {
+            lastTap = null;
+            startEditing(node, false);
+            return;
+          }
+          selectedId = node.id;
+          lastTap = { nodeId: node.id, x: point.x, y: point.y, time: now };
+          updateUI();
+          requestRender();
+        }
+
+        function onTapEmpty(point) {
+          if (mode === "connect") {
+            mode = "select";
+            connectFrom = null;
+            updateUI();
+            requestRender();
+            showToast("已取消连线");
+            return;
+          }
+          const now = performance.now();
+          const isDouble =
+            lastTap &&
+            lastTap.nodeId === null &&
+            now - lastTap.time < 320 &&
+            Math.hypot(point.x - lastTap.x, point.y - lastTap.y) < 30;
+          if (isDouble) {
+            lastTap = null;
+            const world = screenToWorld(point.x, point.y);
+            createNodeAt(world.x, world.y);
+            return;
+          }
+          selectedId = null;
+          lastTap = { nodeId: null, x: point.x, y: point.y, time: now };
+          updateUI();
+          requestRender();
+        }
+
+        function handleConnectTap(node) {
+          if (!connectFrom) {
+            connectFrom = node.id;
+            selectedId = node.id;
+            updateUI();
+            requestRender();
+            showToast("再点一个节点完成连线");
+            return;
+          }
+          if (connectFrom === node.id) {
+            connectFrom = null;
+            updateUI();
+            requestRender();
+            showToast("已取消起点");
+            return;
+          }
+          const exists = doc.edges.some(
+            (e) =>
+              (e.from === connectFrom && e.to === node.id) || (e.from === node.id && e.to === connectFrom),
+          );
+          if (exists) {
+            showToast("这两个节点已经连过了");
+          } else {
+            doc.edges.push({ id: uid(), from: connectFrom, to: node.id });
+            commitHistory();
+            saveLater();
+            showToast("已连接");
+          }
+          connectFrom = null;
+          updateUI();
+          requestRender();
+        }
+
+        function onPointerUp(event) {
+          if (event.pointerType === "mouse" && event.button !== 0) return;
+          const point = { x: event.clientX, y: event.clientY };
+          const had = pointers.has(event.pointerId);
+          pointers.delete(event.pointerId);
+          if (!had) return;
+          cancelLongPress();
+
+          if (pointers.size >= 2) {
+            startPinch();
+            return;
+          }
+          if (pointers.size === 1) {
+            pinch = null;
+            suppressTap = true;
+            gesture = null;
+            return;
+          }
+
+          const wasSuppressed = suppressTap;
+          suppressTap = false;
+          pinch = null;
+
+          if (gesture && !gesture.suppress && !longPressed && !wasSuppressed) {
+            if (gesture.type === "drag") {
+              if (gesture.moved) {
+                commitHistory();
+                saveLater();
+              } else {
+                onTapNode(gesture.node, point);
+              }
+            } else if (gesture.type === "pan" && !gesture.moved) {
+              onTapEmpty(point);
+            }
+          } else if (gesture && gesture.type === "drag" && gesture.moved) {
+            commitHistory();
+            saveLater();
+          }
+
+          longPressed = false;
+          gesture = null;
+          updateUI();
+          requestRender();
+        }
+
+        function onPointerCancel(event) {
+          pointers.delete(event.pointerId);
+          cancelLongPress();
+          gesture = null;
+          pinch = null;
+          suppressTap = true;
+          updateUI();
+          requestRender();
+        }
+
+        function onWheel(event) {
+          event.preventDefault();
+          if (editing) return;
+          const factor = Math.exp(-event.deltaY * 0.0015);
+          zoomAt(event.clientX, event.clientY, factor);
+        }
+
+        function onKeyDown(event) {
+          if (editing) {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              commitEditing();
+            }
+            return;
+          }
+          const mod = event.ctrlKey || event.metaKey;
+          if (mod && event.key.toLowerCase() === "z") {
+            event.preventDefault();
+            if (event.shiftKey) redo();
+            else undo();
+            return;
+          }
+          if (event.key === "Delete" || event.key === "Backspace") {
+            if (selectedId) {
+              event.preventDefault();
+              deleteSelected();
+            }
+            return;
+          }
+          if (event.key === "Escape") {
+            closeMenu();
+            if (mode === "connect") {
+              mode = "select";
+              connectFrom = null;
+              updateUI();
+              requestRender();
+            }
+            return;
+          }
+          if (event.key === "f" || event.key === "F") {
+            fitView();
+            return;
+          }
+          if (event.key === "Enter" && selectedId) {
+            const node = nodeById(selectedId);
+            if (node) {
+              event.preventDefault();
+              startEditing(node, false);
+            }
+          }
+        }
+
+        // ---------- 工具栏 ----------
+
+        function toggleConnectMode() {
+          commitEditing();
+          if (mode === "connect") {
+            mode = "select";
+            connectFrom = null;
+            showToast("已退出连线模式");
+          } else {
+            mode = "connect";
+            connectFrom = null;
+            showToast("点选起点和终点");
+          }
+          updateUI();
+          requestRender();
+        }
+
+        function exportJSON() {
+          const data = JSON.stringify(serializeDoc(), null, 2);
+          const filename = "huabu-" + new Date().toISOString().slice(0, 10) + ".json";
+          if (window.HuabuAndroid && typeof window.HuabuAndroid.saveText === "function") {
+            try {
+              window.HuabuAndroid.saveText(filename, data);
+              showToast("已保存到下载目录");
+              return;
+            } catch (error) {
+              // Android 桥接不可用时回退到浏览器下载
+            }
+          }
+          const blob = new Blob([data], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+          showToast("已导出 JSON");
+        }
+
+        async function copyJSON() {
+          const data = JSON.stringify(serializeDoc(), null, 2);
+          if (window.HuabuAndroid && typeof window.HuabuAndroid.copyText === "function") {
+            try {
+              window.HuabuAndroid.copyText(data);
+              showToast("JSON 已复制");
+              return;
+            } catch (error) {
+              // Android 桥接不可用时回退到浏览器剪贴板
+            }
+          }
+          try {
+            await navigator.clipboard.writeText(data);
+            showToast("JSON 已复制");
+          } catch (error) {
+            showToast("复制失败，请用“导出 JSON”");
+          }
+        }
+
+        function clearDoc() {
+          if (!doc.nodes.length && !doc.edges.length) return;
+          if (!window.confirm("清空画布？这一步可以撤销。")) return;
+          doc.nodes = [];
+          doc.edges = [];
+          selectedId = null;
+          mode = "select";
+          connectFrom = null;
+          commitHistory();
+          saveLater();
+          updateUI();
+          fitView();
+          showToast("已清空");
+        }
+
+        // ---------- 初始化 ----------
+
+        function resize() {
+          const w = window.innerWidth;
+          const h = window.innerHeight;
+          const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+          viewport.w = w;
+          viewport.h = h;
+          viewport.dpr = dpr;
+          canvas.width = Math.round(w * dpr);
+          canvas.height = Math.round(h * dpr);
+          canvas.style.width = w + "px";
+          canvas.style.height = h + "px";
+          requestRender();
+        }
+
+        function seedDemo() {
+          const a = normalizeNode({ x: -100, y: -40, text: "在纸上，慢慢想" });
+          const b = normalizeNode({ x: -180, y: -260, text: "双击空白\n写下第一个想法" });
+          const c = normalizeNode({ x: -20, y: 190, text: "单指拖动\n双指缩放" });
+          a.color = NODE_COLORS[0];
+          b.color = NODE_COLORS[1];
+          c.color = NODE_COLORS[2];
+          doc.nodes.push(a, b, c);
+          doc.edges.push({ id: uid(), from: a.id, to: b.id });
+          doc.edges.push({ id: uid(), from: a.id, to: c.id });
+          for (const node of doc.nodes) layoutNode(node, true);
+          fitView();
+          saveNow();
+        }
+
+        function bindEvents() {
+          canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
+          canvas.addEventListener("pointermove", onPointerMove, { passive: false });
+          canvas.addEventListener("pointerup", onPointerUp, { passive: false });
+          canvas.addEventListener("pointercancel", onPointerCancel, { passive: false });
+          canvas.addEventListener("wheel", onWheel, { passive: false });
+          canvas.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            if (editing) commitEditing();
+            const node = hitNode(event.clientX, event.clientY);
+            if (node) {
+              selectedId = node.id;
+              updateUI();
+              requestRender();
+              openNodeMenu(node, event.clientX, event.clientY);
+            } else {
+              const edge = hitEdge(event.clientX, event.clientY);
+              if (edge) openEdgeMenu(edge, event.clientX, event.clientY);
+              else openEmptyMenu(event.clientX, event.clientY);
+            }
+          });
+          window.addEventListener("keydown", onKeyDown);
+          window.addEventListener("resize", () => {
+            resize();
+            if (editing) setTimeout(() => positionEditor(), 60);
+          });
+          if (window.visualViewport) {
+            window.visualViewport.addEventListener("resize", () => {
+              if (!editing) return;
+              setTimeout(() => {
+                if (!editing) return;
+                positionEditor();
+                ensureNodeVisible(editing.node);
+              }, 60);
+            });
+          }
+          window.addEventListener("pagehide", saveNow);
+
+          document.addEventListener(
+            "pointerdown",
+            (event) => {
+              if (menuEl.hidden) return;
+              if (!menuEl.contains(event.target)) closeMenu();
+            },
+            true,
+          );
+
+          addBtn.addEventListener("click", () => {
+            commitEditing();
+            const center = screenToWorld(viewport.w / 2, viewport.h / 2 - 40);
+            createNodeAt(center.x, center.y);
+          });
+          connectBtn.addEventListener("click", toggleConnectMode);
+          deleteBtn.addEventListener("click", () => {
+            commitEditing();
+            deleteSelected();
+          });
+          undoBtn.addEventListener("click", undo);
+          redoBtn.addEventListener("click", redo);
+          moreBtn.addEventListener("click", () => {
+            commitEditing();
+            const rect = moreBtn.getBoundingClientRect();
+            openMenu(
+              rect.left,
+              rect.top,
+              [
+                { label: "适应画布", action: fitView },
+                { label: "导出 JSON", action: exportJSON },
+                { label: "复制 JSON", action: copyJSON },
+                { label: "导入 JSON", action: () => fileInput.click() },
+                { label: "清空画布", danger: true, action: clearDoc },
+              ],
+              { above: true },
+            );
+          });
+
+          editor.addEventListener("input", () => {
+            if (!editing) return;
+            editing.node.text = editor.value;
+            layoutNode(editing.node, false);
+            positionEditor();
+            ensureNodeVisible(editing.node);
+            saveLater();
+            requestRender();
+          });
+          editor.addEventListener("blur", () => {
+            if (editing) commitEditing();
+          });
+          editor.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              commitEditing();
+            }
+          });
+          doneBtn.addEventListener("pointerdown", (event) => event.preventDefault());
+          doneBtn.addEventListener("click", commitEditing);
+
+          document.getElementById("hint-close").addEventListener("click", () => {
+            hintEl.classList.add("hidden");
+          });
+
+          fileInput.addEventListener("change", async () => {
+            const file = fileInput.files && fileInput.files[0];
+            fileInput.value = "";
+            if (!file) return;
+            try {
+              const data = JSON.parse(await file.text());
+              if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
+                throw new Error("bad format");
+              }
+              doc.nodes = data.nodes.map(normalizeNode);
+              doc.edges = data.edges
+                .map(normalizeEdge)
+                .filter((e) => nodeById(e.from) && nodeById(e.to));
+              for (const node of doc.nodes) layoutNode(node, true);
+              selectedId = null;
+              mode = "select";
+              connectFrom = null;
+              resetHistory();
+              saveNow();
+              fitView();
+              updateUI();
+              showToast("已导入");
+            } catch (error) {
+              showToast("导入失败：不是有效的画布 JSON");
+            }
+          });
+        }
+
+        // 访问 ?selftest=1 时执行，覆盖新建、编辑、撤销、拖动、连线、删除、平移、缩放和本地保存。
+        function runSelfTest() {
+          const results = [];
+          const check = (name, condition) => results.push({ name, pass: !!condition });
+          const tapAt = (x, y, pointerId) => {
+            const init = {
+              pointerId: pointerId || 91,
+              clientX: x,
+              clientY: y,
+              button: 0,
+              buttons: 1,
+              pointerType: "mouse",
+              bubbles: true,
+              cancelable: true,
+            };
+            canvas.dispatchEvent(new PointerEvent("pointerdown", init));
+            canvas.dispatchEvent(new PointerEvent("pointerup", { ...init, buttons: 0 }));
+          };
+
+          const initialCount = doc.nodes.length;
+          check("初始画布尺寸", canvas.width > 0 && canvas.height > 0);
+
+          tapAt(100, 620, 101);
+          tapAt(100, 620, 102);
+          check("双击空白进入编辑", !!editing && editor.classList.contains("show"));
+
+          if (editing) {
+            editor.value = "自测节点";
+            editor.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          commitEditing();
+          const created = doc.nodes[doc.nodes.length - 1];
+          check(
+            "新建并写入文字",
+            doc.nodes.length === initialCount + 1 && created && created.text === "自测节点",
+          );
+
+          const afterCreate = doc.nodes.length;
+          undo();
+          check("撤销新建", doc.nodes.length === afterCreate - 1);
+          redo();
+          check("重做新建", doc.nodes.length === afterCreate);
+
+          const dragNode = doc.nodes[0];
+          const startX = dragNode.x;
+          const startPoint = worldToScreen(dragNode.x + dragNode.w / 2, dragNode.y + dragNode.h / 2);
+          canvas.dispatchEvent(
+            new PointerEvent("pointerdown", {
+              pointerId: 111,
+              clientX: startPoint.x,
+              clientY: startPoint.y,
+              button: 0,
+              buttons: 1,
+              pointerType: "mouse",
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+          canvas.dispatchEvent(
+            new PointerEvent("pointermove", {
+              pointerId: 111,
+              clientX: startPoint.x + 40,
+              clientY: startPoint.y + 20,
+              button: 0,
+              buttons: 1,
+              pointerType: "mouse",
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+          canvas.dispatchEvent(
+            new PointerEvent("pointerup", {
+              pointerId: 111,
+              clientX: startPoint.x + 40,
+              clientY: startPoint.y + 20,
+              button: 0,
+              buttons: 0,
+              pointerType: "mouse",
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+          check("拖动节点", Math.abs(dragNode.x - startX) > 1);
+
+          const edgeCount = doc.edges.length;
+          mode = "connect";
+          connectFrom = null;
+          const a = doc.nodes[1];
+          const b = doc.nodes[2];
+          const pa = worldToScreen(a.x + a.w / 2, a.y + a.h / 2);
+          const pb = worldToScreen(b.x + b.w / 2, b.y + b.h / 2);
+          tapAt(pa.x, pa.y, 121);
+          tapAt(pb.x, pb.y, 122);
+          check("连线模式建立连线", doc.edges.length === edgeCount + 1);
+          mode = "select";
+          connectFrom = null;
+          updateUI();
+
+          const sampleEdge = doc.edges[0];
+          const edgePoints = edgeScreenPoints(sampleEdge);
+          const edgeMid = quadraticPoint(edgePoints.p1, edgePoints.control, edgePoints.p2, 0.5);
+          check("命中连线", !!hitEdge(edgeMid.x, edgeMid.y));
+          const edgeCountBeforeDelete = doc.edges.length;
+          removeEdge(sampleEdge);
+          check("删除连线", doc.edges.length === edgeCountBeforeDelete - 1);
+          undo();
+
+          const camXBefore = cam.x;
+          const panStart = { x: 430, y: 760 };
+          const panId = 131;
+          const panInit = {
+            pointerId: panId,
+            clientX: panStart.x,
+            clientY: panStart.y,
+            button: 0,
+            buttons: 1,
+            pointerType: "touch",
+            bubbles: true,
+            cancelable: true,
+          };
+          canvas.dispatchEvent(new PointerEvent("pointerdown", panInit));
+          canvas.dispatchEvent(
+            new PointerEvent("pointermove", {
+              ...panInit,
+              clientX: panStart.x - 30,
+              clientY: panStart.y,
+            }),
+          );
+          canvas.dispatchEvent(
+            new PointerEvent("pointerup", {
+              ...panInit,
+              clientX: panStart.x - 30,
+              clientY: panStart.y,
+              buttons: 0,
+            }),
+          );
+          check("单指平移", Math.abs(cam.x - camXBefore) > 5);
+
+          const scaleBefore = cam.scale;
+          const touchDown = (id, x, y) =>
+            canvas.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                pointerId: id,
+                clientX: x,
+                clientY: y,
+                button: 0,
+                buttons: 1,
+                pointerType: "touch",
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
+          const touchMove = (id, x, y) =>
+            canvas.dispatchEvent(
+              new PointerEvent("pointermove", {
+                pointerId: id,
+                clientX: x,
+                clientY: y,
+                button: 0,
+                buttons: 1,
+                pointerType: "touch",
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
+          const touchUp = (id, x, y) =>
+            canvas.dispatchEvent(
+              new PointerEvent("pointerup", {
+                pointerId: id,
+                clientX: x,
+                clientY: y,
+                button: 0,
+                buttons: 0,
+                pointerType: "touch",
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
+          touchDown(201, 200, 700);
+          touchDown(202, 300, 700);
+          touchMove(201, 150, 700);
+          touchMove(202, 350, 700);
+          check("双指缩放", cam.scale > scaleBefore + 0.05);
+          touchUp(201, 150, 700);
+          touchUp(202, 350, 700);
+
+          zoomAt(250, 400, 0.00001);
+          check("最小缩放 1%", cam.scale >= 0.01 - 1e-9);
+          zoomAt(250, 400, 1e9);
+          check("最大缩放 12800%", cam.scale <= 128 + 1e-9);
+          fitView();
+
+          saveNow();
+          let savedCount = -1;
+          try {
+            savedCount = JSON.parse(localStorage.getItem(STORAGE_KEY)).nodes.length;
+          } catch (error) {
+            savedCount = -1;
+          }
+          check("写入 localStorage", savedCount === doc.nodes.length);
+
+          const passed = results.filter((r) => r.pass).length;
+          document.title = JSON.stringify({ passed, total: results.length, results });
+        }
+
+        function init() {
+          const params = new URLSearchParams(location.search);
+          if (window.HuabuAndroid) document.body.classList.add("android");
+          if (params.has("selftest")) {
+            try {
+              localStorage.removeItem(STORAGE_KEY);
+            } catch (error) {
+              // 忽略无存储环境
+            }
+          }
+
+          resize();
+          makePaperPattern();
+          cam.x = viewport.w / 2;
+          cam.y = viewport.h / 2;
+          cam.scale = 1;
+          const loaded = loadDoc();
+          if (!loaded) seedDemo();
+          resetHistory();
+          bindEvents();
+          updateUI();
+          requestRender();
+
+          if (params.has("selftest")) {
+            setTimeout(runSelfTest, 50);
+          }
+        }
+
+        init();
+      })();
+    </script>
+  </body>
+</html>
