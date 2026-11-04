@@ -13,6 +13,7 @@
 - **纸感极简**：暖骨白纸面、炭墨文字、发丝细线、极轻纸纹；标题用衬线，正文用无衬线。
 - **手机优先**：单指拖动、双指缩放、长按菜单；双击空白直接建节点并弹出键盘。
 - **本地优先**：自动保存到浏览器 localStorage，不登录、不联网、不上传。
+- **多画布**：顶部切换、保存、新建；每张画布独立保存节点、连线和视野。
 - **单文件**：整个 Web 应用就是一个 `index.html`，没有构建步骤和依赖。
 - **可安装**：`android/` 里是一个最小 WebView 壳，可编译成 APK。
 - **可缩放**：1% 到 12800%，缩到再小也能看全局，放到再大也能读细节。
@@ -31,16 +32,27 @@ python3 -m http.server 8000
 
 ### Android
 
-从 [Releases](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) 下载 `huabu-0.1.1.apk` 安装。
+从 [Releases](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) 下载 `huabu-0.2.0.apk` 安装。
 
 当前 APK 使用 debug 签名，可以直接安装和覆盖升级；如果要上架或长期分发，请用 `android/build.sh` 换成自己的 release keystore。
 
 首次构建会在 `android/debug.keystore` 生成调试签名。请保留这个文件：删除后重新生成的密钥对不上，新 APK 将无法覆盖安装旧版本。
 
+### 多画布
+
+点击顶部的「画布 1」打开菜单：
+
+- **切换画布**：点列表里的任意画布，节点、连线和视野都会恢复；
+- **保存当前画布**：立即写入本地（平时也会自动保存）；
+- **新建画布**：另起一张空白画布，自动命名为「画布 2」「画布 3」……
+
+每张画布是独立文档，互不影响；切换前会自动保存当前画布。
+
 ## 操作
 
 | 操作 | 结果 |
 | --- | --- |
+| 顶部「画布 1」 | 切换画布、保存当前画布、新建画布 |
 | 双击空白 | 在点击处新建节点，键盘弹出，直接输入 |
 | 双击节点 | 编辑文字 |
 | 单击 / 拖动节点 | 选中 / 移动 |
@@ -61,7 +73,8 @@ python3 -m http.server 8000
 
 ## 数据
 
-- Web 版自动保存到 `localStorage`，key 为 `node-canvas-doc-v1`。
+- 画布索引保存在 `node-canvas-index-v2`，每张画布的文档在 `node-canvas-doc-v2:<id>`。
+- 从 v0.1.x 升级时，旧的 `node-canvas-doc-v1` 会自动迁移为「画布 1」。
 - APK 同样使用 WebView 的本地存储。
 - 「导出 JSON」在 Web 版触发下载；在 APK 里保存到 `下载/画布/`。
 - 「复制 JSON」在 APK 里直接写入系统剪贴板。
@@ -75,29 +88,29 @@ python3 -m http.server 8000
 ANDROID_SDK=/path/to/android-sdk bash android/build.sh
 ```
 
-输出：`android/build/huabu-0.1.1.apk`。
+输出：`android/build/huabu-0.2.0.apk`。
 
 脚本会：
 
 1. 把根目录的 `index.html` 复制到 `android/assets/`；
 2. 用 `aapt2` 编译资源并链接 APK；
 3. 用 `javac` 编译 Activity，`d8` 转成 dex；
-4. 用 `zipalign`（可用时）对齐，`apksigner` 用自动生成的 debug keystore 签名。
+4. 用 `zipalign`（可用时）对齐，`apksigner` 用 `android/debug.keystore`（首次自动生成）签名。
 
 GitHub Actions 也会在每次 push 到 `main` 时构建 APK 并上传 artifact，见 `.github/workflows/android.yml`。
 
 ## 自测
 
-Web 版地址后加 `?selftest=1` 打开，会清空本地数据并跑 14 项交互检查，结果显示在页面标题里：
+Web 版地址后加 `?selftest=1` 打开，会清空本地数据并跑 16 项交互检查，结果显示在页面标题里：
 
 ```sh
 chromium-headless --window-size=500,931 --virtual-time-budget=4000 \
   --dump-dom "file:///path/to/index.html?selftest=1" | grep -o '<title>.*</title>'
 ```
 
-当前结果：**14 / 14 通过**，连续三次运行稳定。
+当前结果：**16 / 16 通过**。
 
-覆盖项：初始画布、双击新建、写入文字、撤销、重做、拖动、连线、命中连线、删除连线、单指平移、双指缩放、最小缩放 1%、最大缩放 12800%、写入 localStorage。
+覆盖项：初始画布、双击新建、写入文字、撤销、重做、拖动、连线、命中连线、删除连线、单指平移、双指缩放、最小缩放 1%、最大缩放 12800%、新建空白画布、切换回原画布、写入 localStorage。
 
 ## 项目结构
 

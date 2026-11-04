@@ -109,6 +109,63 @@
         font-variant-numeric: tabular-nums;
       }
 
+      .topbar-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        pointer-events: none;
+      }
+
+      .canvas-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 30px;
+        max-width: 132px;
+        padding: 0 9px;
+        border: 1px solid var(--rule);
+        border-radius: 4px;
+        background: rgba(251, 247, 239, 0.72);
+        color: var(--ink-soft);
+        font-family: var(--font);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        pointer-events: auto;
+        touch-action: manipulation;
+      }
+
+      .canvas-switch:active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .canvas-switch svg {
+        flex: none;
+        width: 10px;
+        height: 10px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      #canvas-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .menu {
+        max-height: 62vh;
+        overflow-y: auto;
+      }
+
+      .menu-item.active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
       .hint {
         position: fixed;
         top: calc(var(--safe-top) + 48px);
@@ -433,7 +490,13 @@
     </div>
 
     <header class="topbar">
-      <div class="brand"><i></i><b>节点画布</b></div>
+      <div class="topbar-left">
+        <div class="brand"><i></i><b>画布</b></div>
+        <button id="btn-canvas" class="canvas-switch" type="button" aria-label="切换或新建画布">
+          <span id="canvas-name">画布 1</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+        </button>
+      </div>
       <div class="zoom" id="zoom">100%</div>
     </header>
 
@@ -497,6 +560,8 @@
         const fileInput = document.getElementById("file-input");
         const zoomEl = document.getElementById("zoom");
         const emptyEl = document.getElementById("empty");
+        const canvasBtn = document.getElementById("btn-canvas");
+        const canvasNameEl = document.getElementById("canvas-name");
         const addBtn = document.getElementById("btn-add");
         const connectBtn = document.getElementById("btn-connect");
         const deleteBtn = document.getElementById("btn-delete");
@@ -527,7 +592,9 @@
           dotAxis: "rgba(110, 100, 84, 0.3)",
           shadow: "rgba(80, 65, 45, 0.055)",
         };
-        const STORAGE_KEY = "node-canvas-doc-v1";
+        const LEGACY_STORAGE_KEY = "node-canvas-doc-v1";
+        const STORAGE_INDEX_KEY = "node-canvas-index-v2";
+        const STORAGE_DOC_PREFIX = "node-canvas-doc-v2:";
 
         const doc = { nodes: [], edges: [] };
         const cam = { x: 0, y: 0, scale: 1 };
@@ -547,6 +614,8 @@
         let rafId = 0;
         let saveTimer = null;
         let storageWarned = false;
+        let canvasIndex = [];
+        let activeCanvasId = null;
         let toastTimer = null;
         const pointers = new Map();
         let paperPattern = null;
@@ -1010,14 +1079,43 @@
           };
         }
 
-        function saveNow() {
+        function warnStorage() {
+          if (!storageWarned) {
+            storageWarned = true;
+            showToast("本地保存不可用，记得用“导出 JSON”备份");
+          }
+        }
+
+        function currentCanvas() {
+          return canvasIndex.find((item) => item.id === activeCanvasId) || null;
+        }
+
+        function saveIndex() {
           try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeDoc()));
+            localStorage.setItem(
+              STORAGE_INDEX_KEY,
+              JSON.stringify({
+                activeId: activeCanvasId,
+                items: canvasIndex.map(({ id, name, updatedAt }) => ({ id, name, updatedAt })),
+              }),
+            );
           } catch (error) {
-            if (!storageWarned) {
-              storageWarned = true;
-              showToast("本地保存不可用，记得用“导出 JSON”备份");
-            }
+            warnStorage();
+          }
+        }
+
+        function saveNow() {
+          if (!activeCanvasId) return;
+          try {
+            localStorage.setItem(
+              STORAGE_DOC_PREFIX + activeCanvasId,
+              JSON.stringify(serializeDoc()),
+            );
+            const item = currentCanvas();
+            if (item) item.updatedAt = Date.now();
+            saveIndex();
+          } catch (error) {
+            warnStorage();
           }
         }
 
@@ -1026,38 +1124,214 @@
           saveTimer = setTimeout(saveNow, 300);
         }
 
-        function loadDoc() {
-          let raw = null;
+        function normalizeCanvasItem(raw, index) {
+          return {
+            id: typeof raw.id === "string" && raw.id ? raw.id : uid(),
+            name:
+              typeof raw.name === "string" && raw.name.trim()
+                ? raw.name.trim()
+                : "画布 " + (index + 1),
+            updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : Date.now(),
+          };
+        }
+
+        function loadCanvasData(id) {
+          if (!id) return null;
           try {
-            raw = localStorage.getItem(STORAGE_KEY);
-          } catch (error) {
-            raw = null;
-          }
-          if (!raw) return false;
-          try {
+            const raw = localStorage.getItem(STORAGE_DOC_PREFIX + id);
+            if (!raw) return null;
             const data = JSON.parse(raw);
-            if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) return false;
-            doc.nodes = data.nodes.map(normalizeNode);
-            doc.edges = data.edges
-              .map(normalizeEdge)
-              .filter((e) => nodeById(e.from) && nodeById(e.to));
-            for (const node of doc.nodes) layoutNode(node, true);
-            if (
-              data.camera &&
-              Number.isFinite(data.camera.x) &&
-              Number.isFinite(data.camera.y) &&
-              Number.isFinite(data.camera.scale)
-            ) {
-              cam.x = data.camera.x;
-              cam.y = data.camera.y;
-              cam.scale = clampScale(data.camera.scale);
-            } else {
-              fitView();
-            }
-            return true;
+            if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) return null;
+            return data;
           } catch (error) {
-            return false;
+            return null;
           }
+        }
+
+        function applyCanvasData(data) {
+          doc.nodes = data.nodes.map(normalizeNode);
+          doc.edges = data.edges
+            .map(normalizeEdge)
+            .filter((e) => nodeById(e.from) && nodeById(e.to));
+          for (const node of doc.nodes) layoutNode(node, true);
+          if (
+            data.camera &&
+            Number.isFinite(data.camera.x) &&
+            Number.isFinite(data.camera.y) &&
+            Number.isFinite(data.camera.scale)
+          ) {
+            cam.x = data.camera.x;
+            cam.y = data.camera.y;
+            cam.scale = clampScale(data.camera.scale);
+          } else {
+            fitView();
+          }
+          selectedId = null;
+          mode = "select";
+          connectFrom = null;
+          lastTap = null;
+          requestRender();
+          updateUI();
+        }
+
+        function updateCanvasLabel() {
+          const item = currentCanvas();
+          const name = item ? item.name : "画布";
+          if (canvasNameEl) canvasNameEl.textContent = name;
+          document.title = "画布 · " + name;
+        }
+
+        function nextCanvasName() {
+          let max = 0;
+          for (const item of canvasIndex) {
+            const match = /^画布 (\d+)$/.exec(item.name);
+            if (match) max = Math.max(max, Number(match[1]));
+          }
+          return "画布 " + (max + 1);
+        }
+
+        function createCanvas() {
+          commitEditing();
+          saveNow();
+          const record = {
+            id: uid(),
+            name: nextCanvasName(),
+            updatedAt: Date.now(),
+          };
+          canvasIndex.push(record);
+          activeCanvasId = record.id;
+          doc.nodes = [];
+          doc.edges = [];
+          selectedId = null;
+          mode = "select";
+          connectFrom = null;
+          lastTap = null;
+          cam.scale = 1;
+          cam.x = viewport.w / 2;
+          cam.y = viewport.h / 2;
+          resetHistory();
+          saveNow();
+          updateUI();
+          updateCanvasLabel();
+          requestRender();
+          closeMenu();
+          showToast("已新建「" + record.name + "」");
+        }
+
+        function switchCanvas(id) {
+          if (!id || id === activeCanvasId) return;
+          commitEditing();
+          saveNow();
+          const data = loadCanvasData(id);
+          if (!data) {
+            showToast("这个画布的数据读不出来");
+            return;
+          }
+          activeCanvasId = id;
+          applyCanvasData(data);
+          resetHistory();
+          updateCanvasLabel();
+          saveIndex();
+          showToast("已切换画布");
+        }
+
+        function openCanvasMenu() {
+          commitEditing();
+          const rect = canvasBtn.getBoundingClientRect();
+          const items = [{ type: "label", label: "切换画布" }];
+          for (const item of canvasIndex) {
+            items.push({
+              label: item.name,
+              active: item.id === activeCanvasId,
+              action: () => switchCanvas(item.id),
+            });
+          }
+          items.push({
+            label: "保存当前画布",
+            action: () => {
+              commitEditing();
+              saveNow();
+              showToast("已保存");
+            },
+          });
+          items.push({ label: "新建画布", action: createCanvas });
+          openMenu(rect.left, rect.bottom + 6, items);
+        }
+
+        function clearAllStorage() {
+          try {
+            localStorage.removeItem(LEGACY_STORAGE_KEY);
+            localStorage.removeItem(STORAGE_INDEX_KEY);
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+              const key = localStorage.key(i);
+              if (key && key.startsWith(STORAGE_DOC_PREFIX)) localStorage.removeItem(key);
+            }
+          } catch (error) {
+            // 无存储环境忽略
+          }
+        }
+
+        function initializeCanvases() {
+          let loaded = false;
+          try {
+            const rawIndex = localStorage.getItem(STORAGE_INDEX_KEY);
+            if (rawIndex) {
+              const parsed = JSON.parse(rawIndex);
+              if (parsed && Array.isArray(parsed.items) && parsed.items.length) {
+                canvasIndex = parsed.items.map(normalizeCanvasItem);
+                const ids = new Set(canvasIndex.map((item) => item.id));
+                activeCanvasId = ids.has(parsed.activeId) ? parsed.activeId : canvasIndex[0].id;
+                let data = loadCanvasData(activeCanvasId);
+                if (!data) {
+                  for (const item of canvasIndex) {
+                    data = loadCanvasData(item.id);
+                    if (data) {
+                      activeCanvasId = item.id;
+                      break;
+                    }
+                  }
+                }
+                if (data) {
+                  applyCanvasData(data);
+                  loaded = true;
+                } else {
+                  const record = { id: uid(), name: nextCanvasName(), updatedAt: Date.now() };
+                  canvasIndex.push(record);
+                  activeCanvasId = record.id;
+                  doc.nodes = [];
+                  doc.edges = [];
+                  cam.scale = 1;
+                  cam.x = viewport.w / 2;
+                  cam.y = viewport.h / 2;
+                  loaded = true;
+                }
+              }
+            }
+          } catch (error) {
+            canvasIndex = [];
+            activeCanvasId = null;
+          }
+
+          if (!loaded) {
+            let legacy = null;
+            try {
+              const rawLegacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+              if (rawLegacy) legacy = JSON.parse(rawLegacy);
+            } catch (error) {
+              legacy = null;
+            }
+            const record = { id: uid(), name: "画布 1", updatedAt: Date.now() };
+            canvasIndex = [record];
+            activeCanvasId = record.id;
+            if (legacy && Array.isArray(legacy.nodes) && Array.isArray(legacy.edges)) {
+              applyCanvasData(legacy);
+            } else {
+              seedDemo();
+            }
+          }
+
+          updateCanvasLabel();
+          saveNow();
         }
 
         // ---------- 节点操作 ----------
@@ -1355,6 +1629,7 @@
           document.body.classList.toggle("connecting", mode === "connect");
           emptyEl.hidden = doc.nodes.length > 0;
           updateHint();
+          updateCanvasLabel();
         }
 
         // ---------- 交互 ----------
@@ -1858,6 +2133,7 @@
             true,
           );
 
+          canvasBtn.addEventListener("click", openCanvasMenu);
           addBtn.addEventListener("click", () => {
             commitEditing();
             const center = screenToWorld(viewport.w / 2, viewport.h / 2 - 40);
@@ -2132,10 +2408,22 @@
           check("最大缩放 12800%", cam.scale <= 128 + 1e-9);
           fitView();
 
+          const firstCanvasId = activeCanvasId;
+          const firstCanvasNodes = doc.nodes.length;
+          createCanvas();
+          check("新建空白画布", doc.nodes.length === 0 && canvasIndex.length >= 2);
+          switchCanvas(firstCanvasId);
+          check(
+            "切换回原画布",
+            activeCanvasId === firstCanvasId && doc.nodes.length === firstCanvasNodes,
+          );
+
           saveNow();
           let savedCount = -1;
           try {
-            savedCount = JSON.parse(localStorage.getItem(STORAGE_KEY)).nodes.length;
+            savedCount = JSON.parse(
+              localStorage.getItem(STORAGE_DOC_PREFIX + activeCanvasId),
+            ).nodes.length;
           } catch (error) {
             savedCount = -1;
           }
@@ -2149,11 +2437,7 @@
           const params = new URLSearchParams(location.search);
           if (window.HuabuAndroid) document.body.classList.add("android");
           if (params.has("selftest")) {
-            try {
-              localStorage.removeItem(STORAGE_KEY);
-            } catch (error) {
-              // 忽略无存储环境
-            }
+            clearAllStorage();
           }
 
           resize();
@@ -2161,8 +2445,7 @@
           cam.x = viewport.w / 2;
           cam.y = viewport.h / 2;
           cam.scale = 1;
-          const loaded = loadDoc();
-          if (!loaded) seedDemo();
+          initializeCanvases();
           resetHistory();
           bindEvents();
           updateUI();
