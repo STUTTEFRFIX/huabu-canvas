@@ -4,7 +4,7 @@
 
 手机优先、单文件、零依赖的节点画布。双击空白写下想法，用细线连起关系；自动保存在本机，离线可用。
 
-[下载 Android APK](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) · [查看源码](https://github.com/STUTTEFRFIX/huabu-canvas)
+[在线预览](https://stuttefrfix.github.io/huabu-canvas/) · [下载 Android APK](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) · [查看源码](https://github.com/STUTTEFRFIX/huabu-canvas)
 
 ![画布预览](preview.png)
 
