@@ -224,7 +224,7 @@
       }
 
       .toolbar button {
-        width: 42px;
+        width: 40px;
         height: 42px;
         display: grid;
         place-items: center;
@@ -267,7 +267,7 @@
         align-self: center;
         width: 1px;
         height: 18px;
-        margin: 0 4px;
+        margin: 0 3px;
         background: var(--rule);
       }
 
@@ -501,7 +501,7 @@
     </header>
 
     <div class="hint" id="hint">
-      <span id="hint-text">双击空白写下一个想法 · 长按更多 · 双指缩放</span>
+      <span id="hint-text">双击空白新建 · 长按拖动框选 · 双指缩放</span>
       <button id="hint-close" aria-label="关闭提示">×</button>
     </div>
 
@@ -514,6 +514,13 @@
           <circle cx="7" cy="17" r="2.6" />
           <circle cx="17" cy="7" r="2.6" />
           <path d="M9 15 15 9" />
+        </svg>
+      </button>
+      <button id="btn-group" aria-label="将选中节点分组" title="将选中节点分组" disabled>
+        <svg viewBox="0 0 24 24">
+          <rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2" />
+          <circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none" />
         </svg>
       </button>
       <span class="sep" aria-hidden="true"></span>
@@ -564,6 +571,7 @@
         const canvasNameEl = document.getElementById("canvas-name");
         const addBtn = document.getElementById("btn-add");
         const connectBtn = document.getElementById("btn-connect");
+        const groupBtn = document.getElementById("btn-group");
         const deleteBtn = document.getElementById("btn-delete");
         const undoBtn = document.getElementById("btn-undo");
         const redoBtn = document.getElementById("btn-redo");
@@ -579,6 +587,10 @@
         const MIN_W = 160;
         const MAX_W = 280;
         const MIN_H = 52;
+        const GROUP_PAD = 24;
+        const GROUP_TITLE_HEIGHT = 42;
+        const GROUP_TITLE_FONT = 13;
+        const GROUP_COLLAPSED_HEIGHT = 30;
         const NODE_COLORS = ["#fbf8f0", "#f4ead8", "#e9efe3", "#f3e4df", "#e5edf0", "#eee7ee"];
         const COLORS = {
           paper: "#f4efe4",
@@ -596,12 +608,15 @@
         const STORAGE_INDEX_KEY = "node-canvas-index-v2";
         const STORAGE_DOC_PREFIX = "node-canvas-doc-v2:";
 
-        const doc = { nodes: [], edges: [] };
+        const doc = { nodes: [], edges: [], groups: [] };
         const cam = { x: 0, y: 0, scale: 1 };
         const viewport = { w: 1, h: 1, dpr: 1 };
         const history = { states: [], index: 0 };
 
-        let selectedId = null;
+        let selectedIds = new Set();
+        let marquee = null;
+        let draggingNodeIds = new Set();
+        let draggingOrigins = new Map();
         let mode = "select";
         let connectFrom = null;
         let editing = null;
@@ -619,6 +634,30 @@
         let toastTimer = null;
         const pointers = new Map();
         let paperPattern = null;
+
+        function isSelected(id) {
+          return selectedIds.has(id);
+        }
+
+        function selectedNodeList() {
+          return doc.nodes.filter((node) => selectedIds.has(node.id));
+        }
+
+        function selectedGroupList() {
+          return doc.groups.filter((group) => selectedIds.has(group.id));
+        }
+
+        function selectOnly(id) {
+          selectedIds = new Set(id ? [id] : []);
+          updateUI();
+          requestRender();
+        }
+
+        function clearSelection() {
+          selectedIds.clear();
+          updateUI();
+          requestRender();
+        }
 
         function uid() {
           if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -742,6 +781,7 @@
             h: Number.isFinite(raw.h) ? raw.h : MIN_H,
             text: typeof raw.text === "string" ? raw.text : "",
             color: NODE_COLORS.includes(raw.color) ? raw.color : NODE_COLORS[0],
+            parentId: typeof raw.parentId === "string" && raw.parentId ? raw.parentId : null,
             lines: [],
           };
         }
@@ -752,6 +792,141 @@
             from: String(raw.from || ""),
             to: String(raw.to || ""),
           };
+        }
+
+        function normalizeGroup(raw) {
+          return {
+            id: typeof raw.id === "string" && raw.id ? raw.id : uid(),
+            title:
+              typeof raw.title === "string" && raw.title.trim() ? raw.title.trim() : "分组",
+            parentId: typeof raw.parentId === "string" && raw.parentId ? raw.parentId : null,
+            collapsed: !!raw.collapsed,
+          };
+        }
+
+        function groupById(id) {
+          if (!id) return null;
+          return doc.groups.find((group) => group.id === id) || null;
+        }
+
+        function directChildNodes(groupId) {
+          return doc.nodes.filter((node) => node.parentId === groupId);
+        }
+
+        function directChildGroups(groupId) {
+          return doc.groups.filter((group) => group.parentId === groupId);
+        }
+
+        function descendantNodes(groupId) {
+          const result = [];
+          const walk = (id) => {
+            for (const node of directChildNodes(id)) result.push(node);
+            for (const group of directChildGroups(id)) walk(group.id);
+          };
+          walk(groupId);
+          return result;
+        }
+
+        function descendantCount(groupId) {
+          let count = directChildNodes(groupId).length;
+          for (const group of directChildGroups(groupId)) {
+            count += 1 + descendantCount(group.id);
+          }
+          return count;
+        }
+
+        function isNodeHidden(node) {
+          let parentId = node.parentId;
+          const seen = new Set();
+          while (parentId && !seen.has(parentId)) {
+            seen.add(parentId);
+            const group = groupById(parentId);
+            if (!group) return false;
+            if (group.collapsed) return true;
+            parentId = group.parentId;
+          }
+          return false;
+        }
+
+        function isGroupHidden(group) {
+          let parentId = group.parentId;
+          const seen = new Set();
+          while (parentId && !seen.has(parentId)) {
+            seen.add(parentId);
+            const parent = groupById(parentId);
+            if (!parent) return false;
+            if (parent.collapsed) return true;
+            parentId = parent.parentId;
+          }
+          return false;
+        }
+
+        function groupDepth(group) {
+          let depth = 0;
+          let parentId = group.parentId;
+          const seen = new Set();
+          while (parentId && !seen.has(parentId)) {
+            seen.add(parentId);
+            depth += 1;
+            const parent = groupById(parentId);
+            if (!parent) break;
+            parentId = parent.parentId;
+          }
+          return depth;
+        }
+
+        function sanitizeGroups() {
+          const ids = new Set(doc.groups.map((group) => group.id));
+          for (const group of doc.groups) {
+            if (group.parentId === group.id || (group.parentId && !ids.has(group.parentId))) {
+              group.parentId = null;
+            }
+          }
+          for (const group of doc.groups) {
+            const seen = new Set([group.id]);
+            let parentId = group.parentId;
+            while (parentId) {
+              if (seen.has(parentId)) {
+                group.parentId = null;
+                break;
+              }
+              seen.add(parentId);
+              const parent = groupById(parentId);
+              if (!parent) {
+                group.parentId = null;
+                break;
+              }
+              parentId = parent.parentId;
+            }
+          }
+          const groupIds = new Set(doc.groups.map((group) => group.id));
+          for (const node of doc.nodes) {
+            if (node.parentId && !groupIds.has(node.parentId)) node.parentId = null;
+          }
+        }
+
+        function ancestorChain(groupId) {
+          const chain = [];
+          let group = groupById(groupId);
+          const seen = new Set();
+          while (group && !seen.has(group.id)) {
+            seen.add(group.id);
+            chain.push(group);
+            group = group.parentId ? groupById(group.parentId) : null;
+          }
+          return chain;
+        }
+
+        function commonParentForNodes(nodes) {
+          if (!nodes.length) return null;
+          const chains = nodes.map((node) => ancestorChain(node.parentId));
+          const first = chains[0];
+          for (const candidate of first) {
+            if (chains.every((chain) => chain.some((group) => group.id === candidate.id))) {
+              return candidate.id;
+            }
+          }
+          return null;
         }
 
         // ---------- 渲染 ----------
@@ -767,9 +942,13 @@
             ctx.fillRect(0, 0, w, h);
           }
           drawDots();
+          const groupBounds = computeGroupBounds();
+          drawGroups(groupBounds);
           drawEdges();
           drawNodes();
-          drawSelection();
+          drawCollapsedGroups(groupBounds);
+          drawSelection(groupBounds);
+          drawMarquee();
           const zoomText = Math.round(cam.scale * 100) + "%";
           if (zoomEl.textContent !== zoomText) zoomEl.textContent = zoomText;
         }
@@ -822,6 +1001,144 @@
           return { x: cx + ux * t, y: cy + uy * t };
         }
 
+        function computeGroupBounds() {
+          const memo = new Map();
+          const chipMemo = new Map();
+          const visiting = new Set();
+          const exclude = draggingNodeIds;
+
+          function expanded(group) {
+            if (memo.has(group.id)) return memo.get(group.id);
+            if (visiting.has(group.id)) return null;
+            visiting.add(group.id);
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            let has = false;
+            const addRect = (rect) => {
+              if (!rect) return;
+              has = true;
+              minX = Math.min(minX, rect.x);
+              minY = Math.min(minY, rect.y);
+              maxX = Math.max(maxX, rect.x + rect.w);
+              maxY = Math.max(maxY, rect.y + rect.h);
+            };
+            for (const node of directChildNodes(group.id)) {
+              if (exclude.has(node.id)) continue;
+              addRect({ x: node.x, y: node.y, w: node.w, h: node.h });
+            }
+            for (const child of directChildGroups(group.id)) {
+              addRect(child.collapsed ? collapsed(child) : expanded(child));
+            }
+            const rect = has
+              ? {
+                  x: minX - GROUP_PAD,
+                  y: minY - GROUP_TITLE_HEIGHT - GROUP_PAD,
+                  w: maxX - minX + GROUP_PAD * 2,
+                  h: maxY - minY + GROUP_TITLE_HEIGHT + GROUP_PAD * 2,
+                }
+              : null;
+            visiting.delete(group.id);
+            memo.set(group.id, rect);
+            return rect;
+          }
+
+          function collapsed(group) {
+            if (chipMemo.has(group.id)) return chipMemo.get(group.id);
+            const base = expanded(group);
+            if (!base) return null;
+            ctx.font = "600 " + GROUP_TITLE_FONT + "px " + FONT_FAMILY;
+            const text = group.title + " · " + descendantCount(group.id);
+            const chip = {
+              x: base.x,
+              y: base.y,
+              w: Math.max(110, ctx.measureText(text).width + 26),
+              h: GROUP_COLLAPSED_HEIGHT,
+            };
+            chipMemo.set(group.id, chip);
+            return chip;
+          }
+
+          for (const group of doc.groups) {
+            expanded(group);
+            collapsed(group);
+          }
+          return {
+            expanded: (id) => memo.get(id) || null,
+            chip: (id) => chipMemo.get(id) || null,
+          };
+        }
+
+        function drawGroups(bounds) {
+          const groups = doc.groups.slice().sort((a, b) => groupDepth(a) - groupDepth(b));
+          ctx.textBaseline = "top";
+          for (const group of groups) {
+            if (isGroupHidden(group) || group.collapsed) continue;
+            const rect = bounds.expanded(group.id);
+            if (!rect) continue;
+            const p = worldToScreen(rect.x, rect.y);
+            const w = rect.w * cam.scale;
+            const h = rect.h * cam.scale;
+            if (p.x + w < -20 || p.y + h < -20 || p.x > viewport.w + 20 || p.y > viewport.h + 20) {
+              continue;
+            }
+            const depth = groupDepth(group);
+            roundRectPath(ctx, p.x, p.y, w, h, Math.max(3, 12 * cam.scale));
+            ctx.fillStyle = depth
+              ? "rgba(77, 102, 112, 0.03)"
+              : "rgba(77, 102, 112, 0.05)";
+            ctx.fill();
+            ctx.strokeStyle = depth
+              ? "rgba(77, 102, 112, 0.18)"
+              : "rgba(77, 102, 112, 0.3)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            const fontSize = GROUP_TITLE_FONT * cam.scale;
+            if (fontSize > 0.5) {
+              ctx.font = "600 " + fontSize + "px " + FONT_FAMILY;
+              ctx.fillStyle = depth
+                ? "rgba(111, 106, 96, 0.88)"
+                : "rgba(77, 102, 112, 0.92)";
+              ctx.fillText(group.title, p.x + 14 * cam.scale, p.y + 12 * cam.scale);
+            }
+          }
+        }
+
+        function drawCollapsedGroups(bounds) {
+          const groups = doc.groups.slice().sort((a, b) => groupDepth(a) - groupDepth(b));
+          for (const group of groups) {
+            if (isGroupHidden(group) || !group.collapsed) continue;
+            const rect = bounds.chip(group.id);
+            if (!rect) continue;
+            const p = worldToScreen(rect.x, rect.y);
+            const w = rect.w * cam.scale;
+            const h = rect.h * cam.scale;
+            const radius = Math.max(3, 8 * cam.scale);
+            roundRectPath(ctx, p.x + 1, p.y + 1.5, w, h, radius);
+            ctx.fillStyle = COLORS.shadow;
+            ctx.fill();
+            roundRectPath(ctx, p.x, p.y, w, h, radius);
+            ctx.fillStyle = "#fbf8f0";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(77, 102, 112, 0.4)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            const fontSize = GROUP_TITLE_FONT * cam.scale;
+            if (fontSize > 0.5) {
+              ctx.font = "600 " + fontSize + "px " + FONT_FAMILY;
+              ctx.fillStyle = COLORS.ink;
+              ctx.textBaseline = "top";
+              ctx.fillText(
+                group.title + " · " + descendantCount(group.id),
+                p.x + 11 * cam.scale,
+                p.y + 7 * cam.scale,
+              );
+            }
+          }
+        }
+
         function edgeScreenPoints(edge) {
           const a = nodeById(edge.from);
           const b = nodeById(edge.to);
@@ -858,24 +1175,31 @@
 
         function hitEdge(sx, sy) {
           for (let i = doc.edges.length - 1; i >= 0; i--) {
-            const points = edgeScreenPoints(doc.edges[i]);
+            const edge = doc.edges[i];
+            const a = nodeById(edge.from);
+            const b = nodeById(edge.to);
+            if (!a || !b || isNodeHidden(a) || isNodeHidden(b)) continue;
+            const points = edgeScreenPoints(edge);
             if (!points) continue;
             let closest = Infinity;
             for (let step = 0; step <= 18; step++) {
               const point = quadraticPoint(points.p1, points.control, points.p2, step / 18);
               closest = Math.min(closest, Math.hypot(sx - point.x, sy - point.y));
             }
-            if (closest <= 12) return doc.edges[i];
+            if (closest <= 12) return edge;
           }
           return null;
         }
 
         function drawEdges() {
           for (const edge of doc.edges) {
+            const a = nodeById(edge.from);
+            const b = nodeById(edge.to);
+            if (!a || !b || isNodeHidden(a) || isNodeHidden(b)) continue;
             const points = edgeScreenPoints(edge);
             if (!points) continue;
             const { p1, p2, control } = points;
-            const active = selectedId && (edge.from === selectedId || edge.to === selectedId);
+            const active = isSelected(edge.from) || isSelected(edge.to);
             const color = active ? COLORS.edgeActive : COLORS.edge;
 
             ctx.strokeStyle = color;
@@ -902,6 +1226,7 @@
         function drawNodes() {
           ctx.textBaseline = "top";
           for (const node of doc.nodes) {
+            if (isNodeHidden(node)) continue;
             const p = worldToScreen(node.x, node.y);
             const w = node.w * cam.scale;
             const h = node.h * cam.scale;
@@ -933,24 +1258,78 @@
           }
         }
 
-        function drawSelection() {
-          const node = nodeById(selectedId);
-          if (!node) return;
-          const p = worldToScreen(node.x, node.y);
-          const w = node.w * cam.scale;
-          const h = node.h * cam.scale;
-          ctx.strokeStyle = COLORS.accent;
-          ctx.lineWidth = 1.5;
-          roundRectPath(ctx, p.x - 3, p.y - 3, w + 6, h + 6, Math.max(4, 12 * cam.scale));
-          ctx.stroke();
-
-          if (mode === "connect" && connectFrom === node.id) {
-            ctx.setLineDash([5, 4]);
-            ctx.strokeStyle = "rgba(77, 102, 112, 0.5)";
-            roundRectPath(ctx, p.x - 7, p.y - 7, w + 14, h + 14, Math.max(6, 16 * cam.scale));
+        function drawSelection(groupBounds) {
+          for (const node of selectedNodeList()) {
+            const p = worldToScreen(node.x, node.y);
+            const w = node.w * cam.scale;
+            const h = node.h * cam.scale;
+            ctx.strokeStyle = COLORS.accent;
+            ctx.lineWidth = 1.5;
+            roundRectPath(ctx, p.x - 3, p.y - 3, w + 6, h + 6, Math.max(4, 12 * cam.scale));
             ctx.stroke();
-            ctx.setLineDash([]);
           }
+
+          for (const group of selectedGroupList()) {
+            if (isGroupHidden(group)) continue;
+            const rect = group.collapsed
+              ? groupBounds.chip(group.id)
+              : groupBounds.expanded(group.id);
+            if (!rect) continue;
+            const p = worldToScreen(rect.x, rect.y);
+            const w = rect.w * cam.scale;
+            const h = rect.h * cam.scale;
+            ctx.strokeStyle = COLORS.accent;
+            ctx.lineWidth = 1.5;
+            roundRectPath(ctx, p.x - 3, p.y - 3, w + 6, h + 6, Math.max(4, 14 * cam.scale));
+            ctx.stroke();
+          }
+
+          if (mode === "connect" && connectFrom) {
+            const node = nodeById(connectFrom);
+            if (node) {
+              const p = worldToScreen(node.x, node.y);
+              const w = node.w * cam.scale;
+              const h = node.h * cam.scale;
+              ctx.setLineDash([5, 4]);
+              ctx.strokeStyle = "rgba(77, 102, 112, 0.5)";
+              roundRectPath(ctx, p.x - 7, p.y - 7, w + 14, h + 14, Math.max(6, 16 * cam.scale));
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+          }
+        }
+
+        function nodesInMarquee(box) {
+          const left = Math.min(box.startX, box.x);
+          const right = Math.max(box.startX, box.x);
+          const top = Math.min(box.startY, box.y);
+          const bottom = Math.max(box.startY, box.y);
+          const ids = [];
+          for (const node of doc.nodes) {
+            if (isNodeHidden(node)) continue;
+            const p = worldToScreen(node.x, node.y);
+            const w = node.w * cam.scale;
+            const h = node.h * cam.scale;
+            if (p.x + w >= left && p.x <= right && p.y + h >= top && p.y <= bottom) {
+              ids.push(node.id);
+            }
+          }
+          return ids;
+        }
+
+        function drawMarquee() {
+          if (!marquee) return;
+          const x = Math.min(marquee.startX, marquee.x);
+          const y = Math.min(marquee.startY, marquee.y);
+          const w = Math.abs(marquee.x - marquee.startX);
+          const h = Math.abs(marquee.y - marquee.startY);
+          ctx.fillStyle = "rgba(77, 102, 112, 0.06)";
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = "rgba(77, 102, 112, 0.68)";
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([4, 4]);
+          ctx.strokeRect(x, y, w, h);
+          ctx.setLineDash([]);
         }
 
         // ---------- 相机 ----------
@@ -964,7 +1343,7 @@
         }
 
         function fitView() {
-          if (!doc.nodes.length) {
+          if (!doc.nodes.length && !doc.groups.length) {
             cam.scale = 1;
             cam.x = viewport.w / 2;
             cam.y = viewport.h / 2;
@@ -976,10 +1355,23 @@
           let maxX = -Infinity;
           let maxY = -Infinity;
           for (const n of doc.nodes) {
+            if (isNodeHidden(n)) continue;
             minX = Math.min(minX, n.x);
             minY = Math.min(minY, n.y);
             maxX = Math.max(maxX, n.x + n.w);
             maxY = Math.max(maxY, n.y + n.h);
+          }
+          const groupBounds = computeGroupBounds();
+          for (const group of doc.groups) {
+            if (isGroupHidden(group)) continue;
+            const rect = group.collapsed
+              ? groupBounds.chip(group.id)
+              : groupBounds.expanded(group.id);
+            if (!rect) continue;
+            minX = Math.min(minX, rect.x);
+            minY = Math.min(minY, rect.y);
+            maxX = Math.max(maxX, rect.x + rect.w);
+            maxY = Math.max(maxY, rect.y + rect.h);
           }
           const bw = Math.max(1, maxX - minX);
           const bh = Math.max(1, maxY - minY);
@@ -1007,8 +1399,15 @@
               h: n.h,
               text: n.text,
               color: n.color,
+              parentId: n.parentId || null,
             })),
             edges: doc.edges.map((e) => ({ id: e.id, from: e.from, to: e.to })),
+            groups: doc.groups.map((group) => ({
+              id: group.id,
+              title: group.title,
+              parentId: group.parentId || null,
+              collapsed: !!group.collapsed,
+            })),
           });
         }
 
@@ -1033,10 +1432,15 @@
 
         function applySnapshot(raw) {
           const data = JSON.parse(raw);
+          doc.groups = (data.groups || []).map(normalizeGroup);
           doc.nodes = data.nodes.map(normalizeNode);
           doc.edges = data.edges.map(normalizeEdge).filter((e) => nodeById(e.from) && nodeById(e.to));
+          sanitizeGroups();
+          pruneEmptyGroups();
           for (const node of doc.nodes) layoutNode(node, true);
-          if (!nodeById(selectedId)) selectedId = null;
+          selectedIds = new Set(
+            [...selectedIds].filter((id) => nodeById(id) || groupById(id)),
+          );
           if (connectFrom && !nodeById(connectFrom)) connectFrom = null;
           requestRender();
           updateUI();
@@ -1073,8 +1477,15 @@
               h: n.h,
               text: n.text,
               color: n.color,
+              parentId: n.parentId || null,
             })),
             edges: doc.edges.map((e) => ({ id: e.id, from: e.from, to: e.to })),
+            groups: doc.groups.map((group) => ({
+              id: group.id,
+              title: group.title,
+              parentId: group.parentId || null,
+              collapsed: !!group.collapsed,
+            })),
             camera: { x: cam.x, y: cam.y, scale: cam.scale },
           };
         }
@@ -1149,10 +1560,13 @@
         }
 
         function applyCanvasData(data) {
+          doc.groups = (data.groups || []).map(normalizeGroup);
           doc.nodes = data.nodes.map(normalizeNode);
           doc.edges = data.edges
             .map(normalizeEdge)
             .filter((e) => nodeById(e.from) && nodeById(e.to));
+          sanitizeGroups();
+          pruneEmptyGroups();
           for (const node of doc.nodes) layoutNode(node, true);
           if (
             data.camera &&
@@ -1166,7 +1580,7 @@
           } else {
             fitView();
           }
-          selectedId = null;
+          selectedIds.clear();
           mode = "select";
           connectFrom = null;
           lastTap = null;
@@ -1202,7 +1616,8 @@
           activeCanvasId = record.id;
           doc.nodes = [];
           doc.edges = [];
-          selectedId = null;
+          doc.groups = [];
+          selectedIds.clear();
           mode = "select";
           connectFrom = null;
           lastTap = null;
@@ -1336,7 +1751,7 @@
 
         // ---------- 节点操作 ----------
 
-        function createNodeAt(worldX, worldY, withEdit = true) {
+        function createNodeAt(worldX, worldY, withEdit = true, parentId = null) {
           const node = {
             id: uid(),
             x: worldX - MIN_W / 2,
@@ -1345,13 +1760,14 @@
             h: MIN_H,
             text: "",
             color: NODE_COLORS[0],
+            parentId: parentId || null,
             lines: [""],
           };
           layoutNode(node, false);
           node.x = worldX - node.w / 2;
           node.y = worldY - node.h / 2;
           doc.nodes.push(node);
-          selectedId = node.id;
+          selectedIds = new Set([node.id]);
           lastTap = null;
           commitHistory();
           saveLater();
@@ -1360,11 +1776,50 @@
           return node;
         }
 
+        function pruneEmptyGroups() {
+          let changed = true;
+          while (changed) {
+            changed = false;
+            for (let i = doc.groups.length - 1; i >= 0; i--) {
+              const group = doc.groups[i];
+              const hasNodes = doc.nodes.some((node) => node.parentId === group.id);
+              const hasGroups = doc.groups.some(
+                (child) => child.parentId === group.id && child.id !== group.id,
+              );
+              if (!hasNodes && !hasGroups) {
+                doc.groups.splice(i, 1);
+                selectedIds.delete(group.id);
+                changed = true;
+              }
+            }
+          }
+        }
+
+        function ungroupGroup(groupId, commit) {
+          const group = groupById(groupId);
+          if (!group) return;
+          const parentId = group.parentId || null;
+          for (const node of doc.nodes) {
+            if (node.parentId === groupId) node.parentId = parentId;
+          }
+          for (const child of doc.groups) {
+            if (child.parentId === groupId) child.parentId = parentId;
+          }
+          doc.groups = doc.groups.filter((item) => item.id !== groupId);
+          selectedIds.delete(groupId);
+          if (commit) {
+            pruneEmptyGroups();
+            commitHistory();
+            saveLater();
+          }
+        }
+
         function removeNode(id, commit) {
           doc.nodes = doc.nodes.filter((n) => n.id !== id);
           doc.edges = doc.edges.filter((e) => e.from !== id && e.to !== id);
-          if (selectedId === id) selectedId = null;
+          selectedIds.delete(id);
           if (connectFrom === id) connectFrom = null;
+          pruneEmptyGroups();
           if (commit) {
             commitHistory();
             saveLater();
@@ -1374,9 +1829,47 @@
         }
 
         function deleteSelected() {
-          if (!selectedId) return;
-          removeNode(selectedId, true);
-          showToast("已删除");
+          if (!selectedIds.size) return;
+          const nodeIds = selectedNodeList().map((node) => node.id);
+          const groupIds = selectedGroupList().map((group) => group.id);
+          for (const id of nodeIds) removeNode(id, false);
+          for (const id of groupIds) ungroupGroup(id, false);
+          pruneEmptyGroups();
+          if (nodeIds.length || groupIds.length) {
+            commitHistory();
+            saveLater();
+            showToast("已删除");
+          }
+          updateUI();
+          requestRender();
+        }
+
+        function finishNodeDrag(reparent = false) {
+          if (reparent && draggingOrigins.size) {
+            const bounds = computeGroupBounds();
+            for (const [nodeId, origin] of draggingOrigins) {
+              const node = nodeById(nodeId);
+              if (!node) continue;
+              const cx = node.x + node.w / 2;
+              const cy = node.y + node.h / 2;
+              let target = groupAtWorld(cx, cy, bounds, true);
+              if (!target && origin.parentId && origin.parentBounds) {
+                const box = origin.parentBounds;
+                if (
+                  cx >= box.x &&
+                  cx <= box.x + box.w &&
+                  cy >= box.y &&
+                  cy <= box.y + box.h
+                ) {
+                  target = groupById(origin.parentId);
+                }
+              }
+              node.parentId = target ? target.id : null;
+            }
+            pruneEmptyGroups();
+          }
+          draggingNodeIds = new Set();
+          draggingOrigins = new Map();
         }
 
         function removeEdge(edge) {
@@ -1421,7 +1914,7 @@
             beforeW: node.w,
             beforeH: node.h,
           };
-          selectedId = node.id;
+          selectedIds = new Set([node.id]);
           lastTap = null;
           editor.value = node.text;
           editor.classList.add("show");
@@ -1499,7 +1992,7 @@
             } else {
               commitHistory();
             }
-            selectedId = null;
+            selectedIds.delete(node.id);
             saveLater();
           } else {
             layoutNode(node, true);
@@ -1574,14 +2067,14 @@
         }
 
         function openNodeMenu(node, x, y) {
-          openMenu(x, y, [
+          const items = [
             { label: "编辑文字", action: () => startEditing(node, false) },
             {
               label: connectFrom === node.id ? "取消连线起点" : "从这里开始连线",
               action: () => {
                 mode = "connect";
                 connectFrom = node.id;
-                selectedId = node.id;
+                selectedIds = new Set([node.id]);
                 updateUI();
                 requestRender();
                 showToast("再点一个节点完成连线");
@@ -1589,16 +2082,160 @@
             },
             { type: "label", label: "节点颜色" },
             { type: "swatches", current: node.color, action: (color) => setNodeColor(node, color) },
-            { label: "删除节点", danger: true, action: () => removeNode(node.id, true) },
-          ]);
+          ];
+          if (node.parentId) {
+            items.push({
+              label: "选择所在分组",
+              action: () => {
+                const group = groupById(node.parentId);
+                if (group) selectOnly(group.id);
+              },
+            });
+            items.push({
+              label: "移出分组",
+              action: () => {
+                node.parentId = null;
+                pruneEmptyGroups();
+                commitHistory();
+                saveNow();
+                updateUI();
+                requestRender();
+                showToast("已移出分组");
+              },
+            });
+          }
+          items.push({
+            label: "删除节点",
+            danger: true,
+            action: () => removeNode(node.id, true),
+          });
+          openMenu(x, y, items);
         }
 
         function openEmptyMenu(x, y) {
           const world = screenToWorld(x, y);
+          const group = deepestGroupAt(x, y, false);
           openMenu(x, y, [
-            { label: "在此新建文本节点", action: () => createNodeAt(world.x, world.y) },
+            {
+              label: "在此新建文本节点",
+              action: () => createNodeAt(world.x, world.y, true, group ? group.id : null),
+            },
             { label: "适应画布", action: fitView },
           ]);
+        }
+
+        function nextGroupTitle() {
+          let max = 0;
+          for (const group of doc.groups) {
+            const match = /^分组 (\d+)$/.exec(group.title);
+            if (match) max = Math.max(max, Number(match[1]));
+          }
+          return "分组 " + (max + 1);
+        }
+
+        function groupSelectedNodes() {
+          commitEditing();
+          const nodes = selectedNodeList();
+          if (!nodes.length) return;
+          const parentId = commonParentForNodes(nodes);
+          const group = {
+            id: uid(),
+            title: nextGroupTitle(),
+            parentId,
+            collapsed: false,
+          };
+          doc.groups.push(group);
+          for (const node of nodes) node.parentId = group.id;
+          pruneEmptyGroups();
+          selectedIds = new Set([group.id]);
+          commitHistory();
+          saveNow();
+          updateUI();
+          requestRender();
+          showToast("已新建「" + group.title + "」");
+        }
+
+        function toggleGroupCollapse(group) {
+          group.collapsed = !group.collapsed;
+          commitHistory();
+          saveNow();
+          updateUI();
+          requestRender();
+          showToast(group.collapsed ? "已折叠分组" : "已展开分组");
+        }
+
+        function removeGroupDeep(groupId) {
+          const groupIds = new Set([groupId]);
+          const addChildren = (id) => {
+            for (const child of directChildGroups(id)) {
+              groupIds.add(child.id);
+              addChildren(child.id);
+            }
+          };
+          addChildren(groupId);
+          const nodeIds = new Set();
+          for (const id of groupIds) {
+            for (const node of directChildNodes(id)) nodeIds.add(node.id);
+          }
+          doc.nodes = doc.nodes.filter((node) => !nodeIds.has(node.id));
+          doc.edges = doc.edges.filter(
+            (edge) => !nodeIds.has(edge.from) && !nodeIds.has(edge.to),
+          );
+          doc.groups = doc.groups.filter((group) => !groupIds.has(group.id));
+          for (const id of groupIds) selectedIds.delete(id);
+          for (const id of nodeIds) selectedIds.delete(id);
+          pruneEmptyGroups();
+          commitHistory();
+          saveNow();
+          updateUI();
+          requestRender();
+          showToast("已删除分组");
+        }
+
+        function openGroupMenu(group, x, y) {
+          selectedIds = new Set([group.id]);
+          updateUI();
+          requestRender();
+          const items = [
+            {
+              label: group.collapsed ? "展开分组" : "折叠分组",
+              action: () => toggleGroupCollapse(group),
+            },
+          ];
+          if (group.parentId) {
+            items.push({
+              label: "选择上层分组",
+              action: () => selectOnly(group.parentId),
+            });
+            items.push({
+              label: "移到顶层",
+              action: () => {
+                group.parentId = null;
+                pruneEmptyGroups();
+                commitHistory();
+                saveNow();
+                updateUI();
+                requestRender();
+                showToast("已移到顶层");
+              },
+            });
+          }
+          items.push({
+            label: "解散分组（保留内容）",
+            action: () => {
+              ungroupGroup(group.id, true);
+              showToast("已解散分组");
+            },
+          });
+          items.push({
+            label: "删除分组及内容",
+            danger: true,
+            action: () => {
+              if (!window.confirm("删除分组及其中所有内容？这一步可以撤销。")) return;
+              removeGroupDeep(group.id);
+            },
+          });
+          openMenu(x, y, items);
         }
 
         function openEdgeMenu(edge, x, y) {
@@ -1618,16 +2255,17 @@
               ? connectFrom
                 ? "再点一个节点完成连线"
                 : "点选一个节点作为连线起点"
-              : "双击空白写下一个想法 · 长按更多 · 双指缩放";
+              : "双击空白新建 · 长按拖动框选 · 双指缩放";
         }
 
         function updateUI() {
           undoBtn.disabled = history.index <= 0;
           redoBtn.disabled = history.index >= history.states.length - 1;
-          deleteBtn.disabled = !selectedId;
+          deleteBtn.disabled = selectedIds.size === 0;
+          groupBtn.disabled = selectedNodeList().length === 0;
           connectBtn.classList.toggle("active", mode === "connect");
           document.body.classList.toggle("connecting", mode === "connect");
-          emptyEl.hidden = doc.nodes.length > 0;
+          emptyEl.hidden = doc.nodes.length > 0 || doc.groups.length > 0;
           updateHint();
           updateCanvasLabel();
         }
@@ -1646,15 +2284,29 @@
             if (!gesture || gesture.moved || gesture.suppress || pointers.size !== 1) return;
             gesture.suppress = true;
             longPressed = true;
-            if (gesture.type === "drag" && gesture.node) {
-              selectedId = gesture.node.id;
+            if (gesture.type === "group-drag" && gesture.group) {
+              selectedIds = new Set([gesture.group.id]);
+              updateUI();
+              requestRender();
+              openGroupMenu(gesture.group, point.x, point.y);
+            } else if (gesture.type === "drag" && gesture.node) {
+              selectedIds = new Set([gesture.node.id]);
               updateUI();
               requestRender();
               openNodeMenu(gesture.node, point.x, point.y);
             } else {
               const edge = hitEdge(point.x, point.y);
-              if (edge) openEdgeMenu(edge, point.x, point.y);
-              else openEmptyMenu(point.x, point.y);
+              if (edge) {
+                openEdgeMenu(edge, point.x, point.y);
+              } else {
+                marquee = {
+                  startX: point.x,
+                  startY: point.y,
+                  x: point.x,
+                  y: point.y,
+                };
+                requestRender();
+              }
             }
           }, 500);
         }
@@ -1663,7 +2315,60 @@
           const p = screenToWorld(sx, sy);
           for (let i = doc.nodes.length - 1; i >= 0; i--) {
             const n = doc.nodes[i];
+            if (isNodeHidden(n)) continue;
             if (p.x >= n.x && p.x <= n.x + n.w && p.y >= n.y && p.y <= n.y + n.h) return n;
+          }
+          return null;
+        }
+
+        function hitGroupTitle(sx, sy) {
+          const bounds = computeGroupBounds();
+          const groups = doc.groups.slice().sort((a, b) => groupDepth(b) - groupDepth(a));
+          for (const group of groups) {
+            if (isGroupHidden(group)) continue;
+            const rect = group.collapsed
+              ? bounds.chip(group.id)
+              : (() => {
+                  const expanded = bounds.expanded(group.id);
+                  return expanded
+                    ? {
+                        x: expanded.x,
+                        y: expanded.y,
+                        w: expanded.w,
+                        h: GROUP_TITLE_HEIGHT,
+                      }
+                    : null;
+                })();
+            if (!rect) continue;
+            const p = worldToScreen(rect.x, rect.y);
+            const w = rect.w * cam.scale;
+            const h = Math.max(rect.h * cam.scale, 16);
+            if (sx >= p.x && sx <= p.x + w && sy >= p.y && sy <= p.y + h) return group;
+          }
+          return null;
+        }
+
+        function deepestGroupAt(sx, sy, includeCollapsed = true) {
+          const bounds = computeGroupBounds();
+          const p = screenToWorld(sx, sy);
+          return groupAtWorld(p.x, p.y, bounds, !includeCollapsed);
+        }
+
+        function groupAtWorld(x, y, bounds, skipCollapsed = true) {
+          const groups = doc.groups.slice().sort((a, b) => groupDepth(b) - groupDepth(a));
+          for (const group of groups) {
+            if (isGroupHidden(group)) continue;
+            if (group.collapsed && skipCollapsed) continue;
+            const rect = group.collapsed ? bounds.chip(group.id) : bounds.expanded(group.id);
+            if (!rect) continue;
+            if (
+              x >= rect.x &&
+              x <= rect.x + rect.w &&
+              y >= rect.y &&
+              y <= rect.y + rect.h
+            ) {
+              return group;
+            }
           }
           return null;
         }
@@ -1720,36 +2425,97 @@
             suppressTap = false;
             longPressed = false;
             const node = hitNode(point.x, point.y);
+            const groupTitle = node ? null : hitGroupTitle(point.x, point.y);
             if (node) {
-              selectedId = node.id;
+              if (!selectedIds.has(node.id)) {
+                selectedIds = new Set([node.id]);
+              }
+              let dragNodes = selectedNodeList();
+              if (!dragNodes.length) dragNodes = [node];
+              draggingNodeIds = new Set();
+              const boundsBefore = computeGroupBounds();
+              draggingNodeIds = new Set(dragNodes.map((item) => item.id));
+              draggingOrigins = new Map(
+                dragNodes.map((item) => [
+                  item.id,
+                  {
+                    parentId: item.parentId || null,
+                    parentBounds: item.parentId
+                      ? boundsBefore.expanded(item.parentId)
+                      : null,
+                  },
+                ]),
+              );
               updateUI();
+              gesture = {
+                type: "drag",
+                pointerId: event.pointerId,
+                node,
+                nodes: dragNodes.map((item) => ({
+                  node: item,
+                  x0: item.x,
+                  y0: item.y,
+                })),
+                startWorld: screenToWorld(point.x, point.y),
+                startX: point.x,
+                startY: point.y,
+                lastX: point.x,
+                lastY: point.y,
+                moved: false,
+                suppress: false,
+              };
+            } else if (groupTitle) {
+              selectedIds = new Set([groupTitle.id]);
+              updateUI();
+              draggingNodeIds = new Set();
+              draggingOrigins = new Map();
+              const groupNodes = descendantNodes(groupTitle.id);
+              gesture = {
+                type: "group-drag",
+                pointerId: event.pointerId,
+                groupId: groupTitle.id,
+                group: groupTitle,
+                nodes: groupNodes.map((item) => ({
+                  node: item,
+                  x0: item.x,
+                  y0: item.y,
+                })),
+                startWorld: screenToWorld(point.x, point.y),
+                startX: point.x,
+                startY: point.y,
+                lastX: point.x,
+                lastY: point.y,
+                moved: false,
+                suppress: false,
+              };
+            } else {
+              draggingNodeIds = new Set();
+              draggingOrigins = new Map();
+              gesture = {
+                type: "pan",
+                pointerId: event.pointerId,
+                startX: point.x,
+                startY: point.y,
+                lastX: point.x,
+                lastY: point.y,
+                moved: false,
+                suppress: false,
+              };
             }
-            gesture = node
-              ? {
-                  type: "drag",
-                  pointerId: event.pointerId,
-                  node,
-                  startX: point.x,
-                  startY: point.y,
-                  lastX: point.x,
-                  lastY: point.y,
-                  moved: false,
-                  suppress: false,
-                }
-              : {
-                  type: "pan",
-                  pointerId: event.pointerId,
-                  startX: point.x,
-                  startY: point.y,
-                  lastX: point.x,
-                  lastY: point.y,
-                  moved: false,
-                  suppress: false,
-                };
             scheduleLongPress(point);
           } else if (pointers.size === 2) {
             cancelLongPress();
-            if (gesture && gesture.type === "drag" && gesture.moved) commitHistory();
+            marquee = null;
+            if (gesture && gesture.type === "drag" && gesture.moved) {
+              finishNodeDrag(true);
+              commitHistory();
+              saveLater();
+            } else if (gesture && gesture.type === "drag") {
+              finishNodeDrag(false);
+            } else if (gesture && gesture.type === "group-drag" && gesture.moved) {
+              commitHistory();
+              saveLater();
+            }
             gesture = null;
             suppressTap = true;
             startPinch();
@@ -1769,6 +2535,12 @@
             doPinch();
             return;
           }
+          if (marquee) {
+            marquee.x = point.x;
+            marquee.y = point.y;
+            requestRender();
+            return;
+          }
           if (!gesture || gesture.suppress) return;
 
           const dx = point.x - gesture.lastX;
@@ -1779,9 +2551,14 @@
               cancelLongPress();
             }
           }
-          if (gesture.type === "drag") {
-            gesture.node.x += dx / cam.scale;
-            gesture.node.y += dy / cam.scale;
+          if (gesture.type === "drag" || gesture.type === "group-drag") {
+            const world = screenToWorld(point.x, point.y);
+            const moveX = world.x - gesture.startWorld.x;
+            const moveY = world.y - gesture.startWorld.y;
+            for (const item of gesture.nodes) {
+              item.node.x = item.x0 + moveX;
+              item.node.y = item.y0 + moveY;
+            }
           } else {
             cam.x += dx;
             cam.y += dy;
@@ -1807,7 +2584,7 @@
             startEditing(node, false);
             return;
           }
-          selectedId = node.id;
+          selectedIds = new Set([node.id]);
           lastTap = { nodeId: node.id, x: point.x, y: point.y, time: now };
           updateUI();
           requestRender();
@@ -1831,10 +2608,16 @@
           if (isDouble) {
             lastTap = null;
             const world = screenToWorld(point.x, point.y);
-            createNodeAt(world.x, world.y);
+            const createGroup = deepestGroupAt(point.x, point.y, false);
+            createNodeAt(world.x, world.y, true, createGroup ? createGroup.id : null);
             return;
           }
-          selectedId = null;
+          const group = deepestGroupAt(point.x, point.y);
+          if (group) {
+            selectedIds = new Set([group.id]);
+          } else {
+            selectedIds.clear();
+          }
           lastTap = { nodeId: null, x: point.x, y: point.y, time: now };
           updateUI();
           requestRender();
@@ -1843,7 +2626,7 @@
         function handleConnectTap(node) {
           if (!connectFrom) {
             connectFrom = node.id;
-            selectedId = node.id;
+            selectedIds = new Set([node.id]);
             updateUI();
             requestRender();
             showToast("再点一个节点完成连线");
@@ -1896,18 +2679,49 @@
           suppressTap = false;
           pinch = null;
 
+          if (marquee) {
+            const moved =
+              Math.hypot(marquee.x - marquee.startX, marquee.y - marquee.startY) > 6;
+            if (moved) {
+              const ids = nodesInMarquee(marquee);
+              selectedIds = new Set(ids);
+              if (ids.length) showToast("已选中 " + ids.length + " 个节点");
+            } else {
+              openEmptyMenu(point.x, point.y);
+            }
+            marquee = null;
+            longPressed = false;
+            gesture = null;
+            updateUI();
+            requestRender();
+            return;
+          }
+
           if (gesture && !gesture.suppress && !longPressed && !wasSuppressed) {
             if (gesture.type === "drag") {
               if (gesture.moved) {
+                finishNodeDrag(true);
                 commitHistory();
                 saveLater();
               } else {
+                finishNodeDrag(false);
                 onTapNode(gesture.node, point);
+              }
+            } else if (gesture.type === "group-drag") {
+              if (gesture.moved) {
+                commitHistory();
+                saveLater();
               }
             } else if (gesture.type === "pan" && !gesture.moved) {
               onTapEmpty(point);
             }
           } else if (gesture && gesture.type === "drag" && gesture.moved) {
+            finishNodeDrag(true);
+            commitHistory();
+            saveLater();
+          } else if (gesture && gesture.type === "drag") {
+            finishNodeDrag(false);
+          } else if (gesture && gesture.type === "group-drag" && gesture.moved) {
             commitHistory();
             saveLater();
           }
@@ -1921,6 +2735,17 @@
         function onPointerCancel(event) {
           pointers.delete(event.pointerId);
           cancelLongPress();
+          if (gesture && gesture.type === "drag" && gesture.moved) {
+            finishNodeDrag(true);
+            commitHistory();
+            saveLater();
+          } else if (gesture && gesture.type === "drag") {
+            finishNodeDrag(false);
+          } else if (gesture && gesture.type === "group-drag" && gesture.moved) {
+            commitHistory();
+            saveLater();
+          }
+          marquee = null;
           gesture = null;
           pinch = null;
           suppressTap = true;
@@ -1951,7 +2776,7 @@
             return;
           }
           if (event.key === "Delete" || event.key === "Backspace") {
-            if (selectedId) {
+            if (selectedIds.size) {
               event.preventDefault();
               deleteSelected();
             }
@@ -1971,12 +2796,10 @@
             fitView();
             return;
           }
-          if (event.key === "Enter" && selectedId) {
-            const node = nodeById(selectedId);
-            if (node) {
-              event.preventDefault();
-              startEditing(node, false);
-            }
+          const enterNodes = selectedNodeList();
+          if (event.key === "Enter" && enterNodes.length === 1) {
+            event.preventDefault();
+            startEditing(enterNodes[0], false);
           }
         }
 
@@ -2041,11 +2864,12 @@
         }
 
         function clearDoc() {
-          if (!doc.nodes.length && !doc.edges.length) return;
+          if (!doc.nodes.length && !doc.edges.length && !doc.groups.length) return;
           if (!window.confirm("清空画布？这一步可以撤销。")) return;
           doc.nodes = [];
           doc.edges = [];
-          selectedId = null;
+          doc.groups = [];
+          selectedIds.clear();
           mode = "select";
           connectFrom = null;
           commitHistory();
@@ -2097,7 +2921,7 @@
             if (editing) commitEditing();
             const node = hitNode(event.clientX, event.clientY);
             if (node) {
-              selectedId = node.id;
+              selectedIds = new Set([node.id]);
               updateUI();
               requestRender();
               openNodeMenu(node, event.clientX, event.clientY);
@@ -2134,10 +2958,14 @@
           );
 
           canvasBtn.addEventListener("click", openCanvasMenu);
+          groupBtn.addEventListener("click", groupSelectedNodes);
           addBtn.addEventListener("click", () => {
             commitEditing();
-            const center = screenToWorld(viewport.w / 2, viewport.h / 2 - 40);
-            createNodeAt(center.x, center.y);
+            const sx = viewport.w / 2;
+            const sy = viewport.h / 2 - 40;
+            const center = screenToWorld(sx, sy);
+            const group = deepestGroupAt(sx, sy, false);
+            createNodeAt(center.x, center.y, true, group ? group.id : null);
           });
           connectBtn.addEventListener("click", toggleConnectMode);
           deleteBtn.addEventListener("click", () => {
@@ -2197,12 +3025,15 @@
               if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
                 throw new Error("bad format");
               }
+              doc.groups = (data.groups || []).map(normalizeGroup);
               doc.nodes = data.nodes.map(normalizeNode);
               doc.edges = data.edges
                 .map(normalizeEdge)
                 .filter((e) => nodeById(e.from) && nodeById(e.to));
+              sanitizeGroups();
+              pruneEmptyGroups();
               for (const node of doc.nodes) layoutNode(node, true);
-              selectedId = null;
+              selectedIds.clear();
               mode = "select";
               connectFrom = null;
               resetHistory();
@@ -2217,7 +3048,7 @@
         }
 
         // 访问 ?selftest=1 时执行，覆盖新建、编辑、撤销、拖动、连线、删除、平移、缩放和本地保存。
-        function runSelfTest() {
+        async function runSelfTest() {
           const results = [];
           const check = (name, condition) => results.push({ name, pass: !!condition });
           const tapAt = (x, y, pointerId) => {
@@ -2408,6 +3239,106 @@
           check("最大缩放 12800%", cam.scale <= 128 + 1e-9);
           fitView();
 
+          const groupNodes = doc.nodes.slice(0, 2);
+          selectedIds = new Set(groupNodes.map((node) => node.id));
+          groupSelectedNodes();
+          const outerGroup = doc.groups[doc.groups.length - 1];
+          check(
+            "新建分组",
+            doc.groups.length >= 1 && groupNodes.every((node) => node.parentId === outerGroup.id),
+          );
+          const childNode = groupNodes[0];
+          selectedIds = new Set([childNode.id]);
+          groupSelectedNodes();
+          const innerGroup = doc.groups[doc.groups.length - 1];
+          check(
+            "嵌套分组",
+            innerGroup.parentId === outerGroup.id && childNode.parentId === innerGroup.id,
+          );
+          toggleGroupCollapse(outerGroup);
+          check("折叠隐藏后代", isNodeHidden(childNode));
+          toggleGroupCollapse(outerGroup);
+          check("展开恢复后代", !isNodeHidden(childNode));
+          const marqueeBox = { startX: 0, startY: 0, x: viewport.w, y: viewport.h };
+          check("框选命中节点", nodesInMarquee(marqueeBox).length === doc.nodes.length);
+
+          const boundsBeforeDrag = computeGroupBounds().expanded(outerGroup.id);
+          const titlePoint = worldToScreen(boundsBeforeDrag.x + 20, boundsBeforeDrag.y + 20);
+          const childBefore = { x: childNode.x, y: childNode.y };
+          const groupDown = {
+            pointerId: 401,
+            clientX: titlePoint.x,
+            clientY: titlePoint.y,
+            button: 0,
+            buttons: 1,
+            pointerType: "mouse",
+            bubbles: true,
+            cancelable: true,
+          };
+          canvas.dispatchEvent(new PointerEvent("pointerdown", groupDown));
+          canvas.dispatchEvent(
+            new PointerEvent("pointermove", {
+              ...groupDown,
+              clientX: titlePoint.x + 30,
+              clientY: titlePoint.y + 20,
+              buttons: 1,
+            }),
+          );
+          canvas.dispatchEvent(
+            new PointerEvent("pointerup", {
+              ...groupDown,
+              clientX: titlePoint.x + 30,
+              clientY: titlePoint.y + 20,
+              buttons: 0,
+            }),
+          );
+          check("拖动分组", Math.abs(childNode.x - childBefore.x) > 1);
+
+          const boundsAfterDrag = computeGroupBounds().expanded(outerGroup.id);
+          const moveNode = doc.nodes[2];
+          const nodeCenter = worldToScreen(
+            moveNode.x + moveNode.w / 2,
+            moveNode.y + moveNode.h / 2,
+          );
+          const targetWorld = {
+            x: boundsAfterDrag.x + boundsAfterDrag.w / 2,
+            y: boundsAfterDrag.y + boundsAfterDrag.h / 2,
+          };
+          const targetScreen = worldToScreen(targetWorld.x, targetWorld.y);
+          const nodeDown = {
+            pointerId: 402,
+            clientX: nodeCenter.x,
+            clientY: nodeCenter.y,
+            button: 0,
+            buttons: 1,
+            pointerType: "mouse",
+            bubbles: true,
+            cancelable: true,
+          };
+          canvas.dispatchEvent(new PointerEvent("pointerdown", nodeDown));
+          canvas.dispatchEvent(
+            new PointerEvent("pointermove", {
+              ...nodeDown,
+              clientX: targetScreen.x,
+              clientY: targetScreen.y,
+              buttons: 1,
+            }),
+          );
+          canvas.dispatchEvent(
+            new PointerEvent("pointerup", {
+              ...nodeDown,
+              clientX: targetScreen.x,
+              clientY: targetScreen.y,
+              buttons: 0,
+            }),
+          );
+          check("节点拖入分组", !!moveNode.parentId);
+
+          ungroupGroup(outerGroup.id, false);
+          check("解散保留内容", !groupById(outerGroup.id) && !!nodeById(childNode.id));
+          commitHistory();
+          saveLater();
+
           const firstCanvasId = activeCanvasId;
           const firstCanvasNodes = doc.nodes.length;
           createCanvas();
@@ -2420,14 +3351,65 @@
 
           saveNow();
           let savedCount = -1;
+          let savedGroups = -1;
           try {
-            savedCount = JSON.parse(
+            const saved = JSON.parse(
               localStorage.getItem(STORAGE_DOC_PREFIX + activeCanvasId),
-            ).nodes.length;
+            );
+            savedCount = saved.nodes.length;
+            savedGroups = (saved.groups || []).length;
           } catch (error) {
             savedCount = -1;
+            savedGroups = -1;
           }
           check("写入 localStorage", savedCount === doc.nodes.length);
+          check("写入分组", savedGroups === doc.groups.length);
+
+          const candidates = [];
+          for (let y = 150; y < viewport.h - 160; y += 70) {
+            for (let x = 24; x < viewport.w - 24; x += 70) {
+              candidates.push([x, y]);
+            }
+          }
+          const marqueeStart = candidates.find(
+            ([x, y]) => !hitNode(x, y) && !hitGroupTitle(x, y) && !hitEdge(x, y),
+          );
+          if (marqueeStart) {
+            const [sx, sy] = marqueeStart;
+            const ex = sx < viewport.w / 2 ? viewport.w - 24 : 24;
+            const ey = sy < viewport.h / 2 ? viewport.h - 160 : 140;
+            const down = {
+              pointerId: 301,
+              clientX: sx,
+              clientY: sy,
+              button: 0,
+              buttons: 1,
+              pointerType: "mouse",
+              bubbles: true,
+              cancelable: true,
+            };
+            canvas.dispatchEvent(new PointerEvent("pointerdown", down));
+            await new Promise((resolve) => setTimeout(resolve, 620));
+            canvas.dispatchEvent(
+              new PointerEvent("pointermove", {
+                ...down,
+                clientX: ex,
+                clientY: ey,
+                buttons: 1,
+              }),
+            );
+            canvas.dispatchEvent(
+              new PointerEvent("pointerup", {
+                ...down,
+                clientX: ex,
+                clientY: ey,
+                buttons: 0,
+              }),
+            );
+            check("长按框选选中节点", selectedIds.size > 0);
+          } else {
+            check("长按框选选中节点", false);
+          }
 
           const passed = results.filter((r) => r.pass).length;
           document.title = JSON.stringify({ passed, total: results.length, results });
