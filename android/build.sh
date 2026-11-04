@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_ROOT="$(cd "$ROOT/.." && pwd)"
 BUILD="$ROOT/build"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.1.1}"
 APK_NAME="huabu-${VERSION}.apk"
 KEYSTORE="${DEBUG_KEYSTORE:-$ROOT/debug.keystore}"
 

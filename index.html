@@ -850,8 +850,8 @@
             ctx.lineWidth = 1;
             ctx.stroke();
 
+            // 不设最小字号：缩小时继续绘制，避免文字整段消失
             const fontSize = FONT_SIZE * cam.scale;
-            if (fontSize < 5) continue;
             ctx.font = fontSize + "px " + FONT_FAMILY;
             ctx.fillStyle = COLORS.ink;
             const padX = PAD_X * cam.scale;

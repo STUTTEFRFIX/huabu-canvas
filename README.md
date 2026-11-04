@@ -31,7 +31,7 @@ python3 -m http.server 8000
 
 ### Android
 
-从 [Releases](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) 下载 `huabu-0.1.0.apk` 安装。
+从 [Releases](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) 下载 `huabu-0.1.1.apk` 安装。
 
 当前 APK 使用 debug 签名，可以直接安装和覆盖升级；如果要上架或长期分发，请用 `android/build.sh` 换成自己的 release keystore。
 
@@ -75,7 +75,7 @@ python3 -m http.server 8000
 ANDROID_SDK=/path/to/android-sdk bash android/build.sh
 ```
 
-输出：`android/build/huabu-0.1.0.apk`。
+输出：`android/build/huabu-0.1.1.apk`。
 
 脚本会：
 
