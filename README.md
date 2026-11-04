@@ -4,7 +4,7 @@
 
 手机优先、单文件、零依赖的节点画布。双击空白写下想法，用细线连起关系；自动保存在本机，离线可用。
 
-[在线预览](https://stuttefrfix.github.io/huabu-canvas/) · [下载 Android APK](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) · [查看源码](https://github.com/STUTTEFRFIX/huabu-canvas)
+[在线预览](https://stuttefrfix.github.io/huabu-canvas/) · [下载 Android APK](https://github.com/STUTTEFRFIX/huabu-canvas/releases/latest) · [查看源码](https://github.com/STUTTEFRFIX/huabu-canvas) · [接手文档](HANDOVER.md)
 
 ![画布预览](preview.png)
 
@@ -157,6 +157,10 @@ chromium-headless --window-size=500,931 --virtual-time-budget=4000 \
 - 正文 16px / 行高 26px；正文对比度约 11:1，次要文字约 4.7:1。
 
 缩放范围故意放得很宽：缩到 1% 看整体结构，放到 12800% 看单字细节。缩到很小时箭头会隐藏，放大到超过 2.5 倍再编辑会自动回落到舒适倍率。
+
+## 接手开发
+
+想继续维护这个项目，先读 [接手文档](HANDOVER.md)：问题背景、实现过程、参考项目、代码地图、构建与发版流程。
 
 ## 灵感
 
